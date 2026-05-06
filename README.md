@@ -89,6 +89,8 @@ npm run dev
 - **CORS_ORIGINS**: comma separated list of allowed frontend origins
 - **CHROMA_DB_PATH**: path to persistent ChromaDB storage (default `./chroma_db`)
 - **ANTHROPIC_MODEL**: Claude model to use (default `claude-sonnet-4-6`)
+- **YTDLP_COOKIE_FILE** / **YOUTUBE_COOKIES_PATH** (optional): path to a Netscape `cookies.txt` export — often required on cloud hosts when YouTube rate-limits datacenter IPs
+- **YOUTUBE_TRANSCRIPT_PROXIES** (optional): JSON `{"http":"...","https":"..."}` or a single proxy URL for `youtube-transcript-api`
 
 ### Frontend (`frontend/.env.local`)
 
