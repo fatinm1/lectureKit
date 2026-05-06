@@ -1,72 +1,145 @@
-# Cloudforce Frontier — Lecture → Study Environment
+# LectureKit
 
-Multi-agent pipeline (LangChain + Claude + OpenAI embeddings + ChromaDB) that transforms a YouTube lecture URL into outlines, multi-depth summaries, flashcards with citations, and semantic jump-to-moment search. **Part 1** establishes the monorepo skeleton, FastAPI surface area, Next.js 14 shell, and landing-page wiring against `POST /process`.
+**Turn any YouTube lecture into a complete study environment — instantly.**
 
-## Repository layout
+LectureKit is a multi-agent AI system built for the **Cloudforce Frontier Internship** hackathon. Paste any **public YouTube lecture URL** and get a complete study kit: timestamped outline, multi-depth summaries, flashcards with source citations, semantic search, and bilingual support in five languages.
 
-```
-├── DESIGN.md              # Linear design tokens — source of truth for UI
-├── README.md
-├── backend/               # FastAPI + future LangChain agents
-└── frontend/              # Next.js 14 (App Router) + Tailwind
-```
+## Live demo
 
-## Prerequisites
+Coming after deployment — add Vercel URL here
 
-- Python **3.11+** (virtualenv recommended)
-- Node.js **18+** and npm
+## Features
 
-## Backend (FastAPI)
+- **Structured outline** with timestamped jump-points back into the video
+- **Summaries at three depths** — 90 seconds, 5 minutes, and full
+- **10 flashcards** with source timestamp citations
+- **Semantic search** that finds the exact moment in the video that answers any question
+- **Bilingual support** in English, Spanish, French, Bengali, and Arabic
+- **Beautiful Linear-inspired dark UI** with a polished marketing landing page and animated hero
+
+## Architecture
+
+LectureKit is built as a clear, testable pipeline of agents with strict data contracts (Pydantic on the backend, TypeScript on the frontend).
+
+### Agent 1 — Transcript Agent
+
+- Fetches transcript via `youtube-transcript-api` with a **`yt-dlp` fallback**
+- Cleans transcript text by removing filler words and **collapsing consecutive duplicate sentences/phrases**
+- Chunks the transcript into ~500-word segments while preserving timestamps
+
+### Agent 2 — Content Agent
+
+- Uses **Claude Sonnet** via the **Anthropic SDK**
+- Generates **outline + three summaries + 10 flashcards** in a **single API call**
+- Returns structured JSON with timestamps that map back to the video
+
+### Agent 3 — Search Agent
+
+- Embeds transcript chunks **locally** using `sentence-transformers` (`all-MiniLM-L6-v2`)
+- Stores vectors in a **persistent ChromaDB** vector store (path configurable via `CHROMA_DB_PATH`)
+- Returns the top 3 most relevant transcript chunks for any query (with timestamps for jump-to-moment)
+
+### Translation Agent (bonus)
+
+- Translates study materials to a target language via Claude (with robust JSON parsing and a split-call fallback for large sessions)
+- The frontend caches translations **in component state** per language to avoid repeat calls
+
+## Tech stack
+
+| Layer | Technology |
+| --- | --- |
+| Frontend | Next.js 14, TypeScript, Tailwind CSS |
+| Backend | FastAPI, Python 3.11 |
+| LLM | Claude Sonnet (Anthropic SDK) |
+| Embeddings | `sentence-transformers` `all-MiniLM-L6-v2` |
+| Vector Store | ChromaDB (persistent) |
+| Transcript | `youtube-transcript-api` + `yt-dlp` fallback |
+| Design | Linear design system via `DESIGN.md` |
+| Deployment | Vercel (frontend) + Railway (backend) |
+
+## Local development setup
+
+### Backend
 
 ```bash
 cd backend
 python3 -m venv .venv
-source .venv/bin/activate          # Windows: .venv\Scripts\activate
+source .venv/bin/activate
 pip install -r requirements.txt
-cp .env .env.local                 # optional — edit keys when agents go live
+cp .env.example .env
+# Add your ANTHROPIC_API_KEY to .env
 uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-- `GET http://localhost:8000/health` → `{"status":"ok","service":"cloudforce-frontier-api"}`
-- `POST http://localhost:8000/process` with JSON `{"youtube_url":"https://www.youtube.com/watch?v=..."}`
-  - Returns `{"status":"accepted","youtube_url":"..."}` until agents are implemented.
-
-**CORS:** defaults to `http://localhost:3000`. Override with `CORS_ORIGINS=https://your-vercel.app,http://localhost:3000` in `backend/.env` for previews/production.
-
-## Frontend (Next.js 14)
+### Frontend
 
 ```bash
 cd frontend
-# Ensure `.env.local` defines NEXT_PUBLIC_API_URL (defaults assumed in code if blank)
-npm install                         # already done if you scaffolded with create-next-app
-npm run dev                         # Turbopack (`next dev --turbo`). Fallback: `npm run dev:webpack`
+npm install
+cp .env.local.example .env.local
+# Set NEXT_PUBLIC_API_URL=http://localhost:8000
+npm run dev
 ```
 
-Open `http://localhost:3000/` for the **LectureKit marketing page**, or `http://localhost:3000/app` for the **URL workspace**. Submitting the form on `/app` issues:
+## Environment variables
 
+### Backend (`backend/.env`)
+
+- **ANTHROPIC_API_KEY**: required for Content Agent and Translation Agent
+- **CORS_ORIGINS**: comma separated list of allowed frontend origins
+- **CHROMA_DB_PATH**: path to persistent ChromaDB storage (default `./chroma_db`)
+- **ANTHROPIC_MODEL**: Claude model to use (default `claude-sonnet-4-6`)
+
+### Frontend (`frontend/.env.local`)
+
+- **NEXT_PUBLIC_API_URL**: backend URL (default `http://localhost:8000`)
+
+## API endpoints
+
+| Method | Endpoint | Description |
+| --- | --- | --- |
+| GET | `/health` | Health check |
+| POST | `/process` | Full pipeline — transcript + content + search indexing |
+| POST | `/search` | Semantic search for a processed video |
+| POST | `/translate` | Translate study materials to a target language |
+
+## Project structure
+
+```text
+lectureKit/
+├── DESIGN.md                    # Linear design tokens
+├── backend/
+│   ├── main.py                  # FastAPI app + endpoints
+│   ├── agents/
+│   │   ├── transcript_agent.py  # Agent 1: fetch + chunk transcript
+│   │   ├── content_agent.py     # Agent 2: Claude outline + summaries + flashcards
+│   │   ├── search_agent.py      # Agent 3: embeddings + ChromaDB semantic search
+│   │   └── translate_agent.py   # Translation via Claude
+│   ├── models/
+│   │   └── schemas.py           # Pydantic request/response models
+│   ├── utils/
+│   │   └── youtube.py           # YouTube URL parsing utilities
+│   └── requirements.txt
+└── frontend/
+    ├── app/
+    │   ├── page.tsx             # Marketing landing page
+    │   ├── app/page.tsx         # URL input + loading stepper
+    │   └── study/page.tsx       # Full study dashboard
+    ├── components/
+    │   ├── marketing/           # Landing page components
+    │   └── app/                 # App components
+    ├── types/lecture.ts         # TypeScript types
+    └── utils/format.ts          # Timestamp formatting
 ```
-POST ${NEXT_PUBLIC_API_URL}/process
-```
 
-and logs the JSON response in the browser console (`[LectureKit] POST /process response`).
+## Hackathon context
 
-### Frontend troubleshooting (unstyled white page)
+Built for the **Cloudforce Frontier Internship — No Resume Required** hackathon (May 4–11, 2026). **Capability 1 (Student)** is implemented completely. The architecture prioritizes reliability and craftsmanship over broad but shallow scope.
 
-If you see **Times/New Roman on white** with blue links, the HTML loaded but **`/_next/static/css/app/layout.css` did not** (stale build or wrong server).
+## Tradeoffs (for defense video)
 
-1. Stop every running `next dev` / `next start` process.
-2. From `frontend/`: `npm run dev:fresh` (clears `.next` **and** `node_modules/.cache`, then starts dev).
-3. Hard refresh the tab (Shift+Reload). In DevTools → **Network**, confirm `layout.css` returns **200**.
-4. Ensure you are on the **Next.js** port (default **3000**), not the FastAPI port (**8000**).
-
-## Design system
-
-Visual language follows `DESIGN.md` (Linear canvas `#010102`, lavender accent `#5e6ad2`, hairline borders, Inter as the open-font substitute). Tailwind maps these tokens under `frontend/tailwind.config.ts`.
-
-## Part 1 verification checklist
-
-1. Backend health responds with `status: ok`.
-2. Frontend loads with dark canvas + lavender CTA.
-3. Submitting a valid YouTube URL logs an `accepted` payload without network errors.
-
-Pause here for hackathon review — subsequent parts add transcript fetching, LangChain orchestration, embeddings, and the study dashboard UI.
+- Focused on **Capability 1** rather than attempting all three: one polished capability beats three incomplete ones
+- Used **local** `sentence-transformers` embeddings instead of OpenAI: eliminates external dependency and per-request embedding costs
+- Added **`yt-dlp` fallback** for transcript fetching to handle YouTube’s inconsistent transcript availability
+- Split translation into **two Claude calls** as a fallback for large sessions to reduce truncation/token-limit failures
+- Used **localStorage** instead of a database: appropriate for hackathon scope and avoids infrastructure complexity
