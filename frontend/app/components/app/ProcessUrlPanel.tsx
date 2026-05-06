@@ -8,7 +8,10 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, useState } from "react";
+import { useRouter } from "next/navigation";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+
+import type { LectureSession } from "../../../types/lecture";
 
 const FEATURES = ["Instant Summaries", "Smart Flashcards", "Semantic Search"] as const;
 
@@ -30,6 +33,92 @@ export function ProcessUrlPanel(): JSX.Element {
   const [url, setUrl] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [uiMode, setUiMode] = useState<"form" | "loading">("form");
+  const [activeStep, setActiveStep] = useState<1 | 2 | 3>(1);
+  const [completedSteps, setCompletedSteps] = useState<Record<1 | 2 | 3, boolean>>({
+    1: false,
+    2: false,
+    3: false,
+  });
+  const timersRef = useRef<number[]>([]);
+
+  const router = useRouter();
+
+  const steps = useMemo(
+    () =>
+      [
+        { id: 1 as const, label: "Fetching transcript" },
+        { id: 2 as const, label: "Analyzing content" },
+        { id: 3 as const, label: "Building study kit" },
+      ] as const,
+    []
+  );
+
+  function clearTimers(): void {
+    for (const t of timersRef.current) {
+      window.clearTimeout(t);
+    }
+    timersRef.current = [];
+  }
+
+  useEffect(() => {
+    return () => clearTimers();
+  }, []);
+
+  function startStepperTimers(): void {
+    clearTimers();
+    setActiveStep(1);
+    setCompletedSteps({ 1: false, 2: false, 3: false });
+
+    timersRef.current.push(
+      window.setTimeout(() => {
+        setCompletedSteps((prev) => ({ ...prev, 1: true }));
+        setActiveStep(2);
+      }, 8000)
+    );
+
+    timersRef.current.push(
+      window.setTimeout(() => {
+        setCompletedSteps((prev) => ({ ...prev, 2: true }));
+        setActiveStep(3);
+      }, 20000)
+    );
+  }
+
+  function resetToForm(message?: string): void {
+    clearTimers();
+    setUiMode("form");
+    setIsSubmitting(false);
+    setActiveStep(1);
+    setCompletedSteps({ 1: false, 2: false, 3: false });
+    setStatusMessage(message ?? null);
+  }
+
+  function persistSession(payload: unknown): void {
+    if (!payload || typeof payload !== "object") {
+      throw new Error("Unexpected response payload.");
+    }
+
+    const obj = payload as Record<string, unknown>;
+    const session: LectureSession = {
+      video_id: String(obj.video_id ?? ""),
+      youtube_url: String(obj.youtube_url ?? url),
+      chunk_count: Number(obj.chunk_count ?? 0),
+      outline: (obj.outline as LectureSession["outline"]) ?? [],
+      summary_90s: String(obj.summary_90s ?? ""),
+      summary_5min: String(obj.summary_5min ?? ""),
+      summary_full: String(obj.summary_full ?? ""),
+      flashcards: (obj.flashcards as LectureSession["flashcards"]) ?? [],
+      indexed: Boolean(obj.indexed),
+      processed_at: new Date().toISOString(),
+    };
+
+    if (!session.video_id || !session.youtube_url) {
+      throw new Error("Missing required fields in response.");
+    }
+
+    window.localStorage.setItem("lecturekit_session", JSON.stringify(session));
+  }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     /**
@@ -43,6 +132,8 @@ export function ProcessUrlPanel(): JSX.Element {
     event.preventDefault();
     setStatusMessage(null);
     setIsSubmitting(true);
+    setUiMode("loading");
+    startStepperTimers();
 
     try {
       // Step: Provide a friendly client-side check so users get immediate feedback.
@@ -50,7 +141,7 @@ export function ProcessUrlPanel(): JSX.Element {
         // eslint-disable-next-line no-new
         new URL(url);
       } catch {
-        setStatusMessage("Please paste a valid YouTube URL (e.g. https://www.youtube.com/watch?v=...).");
+        resetToForm("Please paste a valid YouTube URL (e.g. https://www.youtube.com/watch?v=...).");
         return;
       }
 
@@ -90,13 +181,64 @@ export function ProcessUrlPanel(): JSX.Element {
         return;
       }
 
-      setStatusMessage("Submitted — check the console for the full JSON response.");
+      setCompletedSteps({ 1: true, 2: true, 3: true });
+
+      // Step: Store the full session for `/study`, then navigate.
+      persistSession(payload);
+
+      window.setTimeout(() => {
+        router.push("/study");
+      }, 500);
     } catch (error) {
       console.error("[LectureKit] Failed to reach backend", error);
       setStatusMessage("Network error — is the FastAPI server running?");
     } finally {
       setIsSubmitting(false);
     }
+  }
+
+  function StepIndicator(props: {
+    label: string;
+    state: "inactive" | "active" | "complete";
+  }): JSX.Element {
+    const { label, state } = props;
+
+    const labelClass =
+      state === "active" ? "text-ink" : state === "complete" ? "text-marketing-muted" : "text-marketing-muted";
+
+    return (
+      <div className="flex items-center gap-md py-md">
+        <div className="flex h-5 w-5 items-center justify-center">
+          {state === "active" ? (
+            <span
+              className="motion-safe:animate-pulse motion-reduce:animate-none"
+              aria-hidden="true"
+              style={{
+                width: 8,
+                height: 8,
+                borderRadius: 9999,
+                backgroundColor: "#5e6ad2",
+              }}
+            />
+          ) : state === "complete" ? (
+            <span className="text-primary" aria-hidden="true">
+              ✓
+            </span>
+          ) : (
+            <span
+              aria-hidden="true"
+              style={{
+                width: 6,
+                height: 6,
+                borderRadius: 9999,
+                backgroundColor: "#1a1a1a",
+              }}
+            />
+          )}
+        </div>
+        <p className={`text-body transition-colors duration-interaction ease-out ${labelClass}`}>{label}</p>
+      </div>
+    );
   }
 
   return (
@@ -117,60 +259,89 @@ export function ProcessUrlPanel(): JSX.Element {
         </p>
       </div>
 
-      <form
-        onSubmit={handleSubmit}
-        className="flex w-full max-w-xl flex-col gap-md transition-opacity duration-interaction ease-out"
-      >
-        <div className="flex flex-col items-stretch gap-sm sm:flex-row sm:items-center">
-          <label htmlFor="youtube-url-app" className="sr-only">
-            YouTube lecture URL
-          </label>
-          <input
-            id="youtube-url-app"
-            name="youtube-url-app"
-            type="text"
-            required
-            placeholder="https://www.youtube.com/watch?v=..."
-            value={url}
-            onChange={(e) => setUrl(e.target.value)}
-            inputMode="url"
-            autoComplete="off"
-            className="min-h-[44px] flex-1 rounded-linear border border-marketing-divider bg-surface-1 px-sm py-xs text-body text-ink outline-none transition duration-interaction ease-out placeholder:text-ink-tertiary focus:border-primary-focus focus:shadow-focus-glow"
-          />
-          <button
-            type="submit"
-            disabled={isSubmitting}
-            className="min-h-[44px] rounded-linear bg-primary px-[14px] py-[8px] text-button font-medium text-onprimary transition duration-interaction ease-out hover:bg-primary-hover active:bg-primary-focus disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {isSubmitting ? "Sending…" : "Generate study kit"}
-          </button>
-        </div>
+      {uiMode === "form" ? (
+        <form
+          onSubmit={handleSubmit}
+          className="flex w-full max-w-xl flex-col gap-md transition-opacity duration-interaction ease-out"
+        >
+          <div className="flex flex-col items-stretch gap-sm sm:flex-row sm:items-center">
+            <label htmlFor="youtube-url-app" className="sr-only">
+              YouTube lecture URL
+            </label>
+            <input
+              id="youtube-url-app"
+              name="youtube-url-app"
+              type="text"
+              required
+              placeholder="https://www.youtube.com/watch?v=..."
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+              inputMode="url"
+              autoComplete="off"
+              className="min-h-[44px] flex-1 rounded-linear border border-marketing-divider bg-surface-1 px-sm py-xs text-body text-ink outline-none transition duration-interaction ease-out placeholder:text-ink-tertiary focus:border-primary-focus focus:shadow-focus-glow"
+            />
+            <button
+              type="submit"
+              disabled={isSubmitting}
+              className="min-h-[44px] rounded-linear bg-primary px-[14px] py-[8px] text-button font-medium text-onprimary transition duration-interaction ease-out hover:bg-primary-hover active:bg-primary-focus disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {isSubmitting ? "Sending…" : "Generate study kit"}
+            </button>
+          </div>
 
-        <div className="flex flex-wrap gap-x-lg gap-y-xs text-secondary text-marketing-muted">
-          {FEATURES.map((label) => (
-            <span key={label} className="transition-opacity duration-interaction ease-out hover:opacity-80">
-              {label}
-            </span>
-          ))}
-        </div>
+          <div className="flex flex-wrap gap-x-lg gap-y-xs text-secondary text-marketing-muted">
+            {FEATURES.map((label) => (
+              <span key={label} className="transition-opacity duration-interaction ease-out hover:opacity-80">
+                {label}
+              </span>
+            ))}
+          </div>
 
-        {statusMessage ? (
-          <p className="text-secondary text-ink-muted" role="status">
-            {statusMessage}
+          {statusMessage ? (
+            <p className="text-secondary text-ink-muted" role="status">
+              {statusMessage}
+            </p>
+          ) : null}
+
+          <p className="text-caption text-marketing-muted">
+            Prefer the story?{" "}
+            <Link href="/" className="text-primary transition-colors duration-interaction ease-out hover:text-primary-hover">
+              Back to marketing
+            </Link>
+            {" · "}
+            <Link href="/study" className="text-primary transition-colors duration-interaction ease-out hover:text-primary-hover">
+              Study shell preview
+            </Link>
           </p>
-        ) : null}
+        </form>
+      ) : (
+        <div className="flex w-full max-w-xl flex-col items-center justify-center py-xxl">
+          <div className="w-full">
+            <div className="mx-auto w-full max-w-md">
+              {steps.map((step) => {
+                const state =
+                  completedSteps[step.id] ? "complete" : activeStep === step.id ? "active" : "inactive";
+                return <StepIndicator key={step.id} label={step.label} state={state} />;
+              })}
+            </div>
 
-        <p className="text-caption text-marketing-muted">
-          Prefer the story?{" "}
-          <Link href="/" className="text-primary transition-colors duration-interaction ease-out hover:text-primary-hover">
-            Back to marketing
-          </Link>
-          {" · "}
-          <Link href="/study" className="text-primary transition-colors duration-interaction ease-out hover:text-primary-hover">
-            Study shell preview
-          </Link>
-        </p>
-      </form>
+            {statusMessage ? (
+              <div className="mt-lg text-center">
+                <p className="text-secondary text-[#d16a6a]" role="status">
+                  {statusMessage}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => resetToForm()}
+                  className="mt-md text-button font-medium text-marketing-muted transition duration-interaction ease-out hover:text-ink"
+                >
+                  Retry
+                </button>
+              </div>
+            ) : null}
+          </div>
+        </div>
+      )}
     </section>
   );
 }
