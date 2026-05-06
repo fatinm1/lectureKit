@@ -18,6 +18,8 @@ Data flow: FastAPI `/process` orchestrator → this agent → downstream agents.
 from __future__ import annotations
 
 import concurrent.futures
+import json
+import os
 import re
 from dataclasses import dataclass
 from typing import Sequence
@@ -99,6 +101,41 @@ class TranscriptAgent:
         self._max_words_over_target = max_words_over_target
         self._fetch_timeout_s = fetch_timeout_s
 
+    def _cookie_file_path(self) -> str | None:
+        """
+        Optional Netscape-format cookies file for YouTube (same file works for
+        youtube-transcript-api and yt-dlp). Set YTDLP_COOKIE_FILE or YOUTUBE_COOKIES_PATH in production.
+        """
+        for key in ("YTDLP_COOKIE_FILE", "YOUTUBE_COOKIES_PATH", "COOKIES_PATH"):
+            raw = (os.getenv(key) or "").strip()
+            if raw and os.path.isfile(raw):
+                return raw
+        return None
+
+    def _transcript_proxies(self) -> dict[str, str] | None:
+        """
+        Optional HTTP(S) proxies for youtube-transcript-api (helps when datacenter IPs are blocked).
+
+        YOUTUBE_TRANSCRIPT_PROXIES: JSON object {\"http\":\"...\",\"https\":\"...\"} or a single proxy URL.
+        Falls back to HTTPS_PROXY / HTTP_PROXY if set.
+        """
+        raw = (os.getenv("YOUTUBE_TRANSCRIPT_PROXIES") or "").strip()
+        if raw:
+            try:
+                parsed = json.loads(raw)
+                if isinstance(parsed, dict) and parsed:
+                    return {str(k): str(v) for k, v in parsed.items()}
+            except json.JSONDecodeError:
+                pass
+            if raw.startswith("http"):
+                return {"http": raw, "https": raw}
+        https_p = (os.getenv("HTTPS_PROXY") or os.getenv("https_proxy") or "").strip()
+        http_p = (os.getenv("HTTP_PROXY") or os.getenv("http_proxy") or "").strip()
+        chosen = https_p or http_p
+        if chosen:
+            return {"http": chosen, "https": chosen}
+        return None
+
     def process(self, youtube_url: str) -> tuple[str, list[TranscriptChunk]]:
         """
         Process a YouTube URL into cleaned, timestamped transcript chunks.
@@ -138,110 +175,173 @@ class TranscriptAgent:
 
     def _fetch_transcript_entries(self, video_id: str) -> list[dict]:
         """
-        Retrieve transcript entries from youtube-transcript-api.
+        Retrieve transcript entries using several strategies (datacenter-friendly).
+
+        Order:
+        1. youtube-transcript-api get_transcript (optional proxies + cookies file)
+        2. youtube-transcript-api list_transcripts + fetch (different code path)
+        3. yt-dlp subtitle metadata + VTT download (browser-like headers, optional cookies file)
+        4. Same as (3) with nocheckcertificate for strict TLS middleboxes
 
         Args:
-            video_id: 11-character YouTube ID.
+            video_id: YouTube video ID.
 
         Returns:
             List of transcript entries (dicts with `text`, `start`, `duration`).
-
-        Steps:
-            1. Run the library call in a thread.
-            2. Enforce a hard timeout at the future boundary.
-            3. Re-map library exceptions into domain errors with descriptive messages.
         """
-        try:
+        proxies = self._transcript_proxies()
+        cookies_path = self._cookie_file_path()
+
+        def _run_with_timeout(fn):
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                future = executor.submit(YouTubeTranscriptApi.get_transcript, video_id)
+                future = executor.submit(fn)
                 return future.result(timeout=self._fetch_timeout_s)
-        except concurrent.futures.TimeoutError as exc:
-            raise TranscriptFetchTimeoutError(
-                f"Network timeout while fetching transcript (>{self._fetch_timeout_s:.0f}s)"
-            ) from exc
-        except (TranscriptsDisabled, NoTranscriptFound) as exc:
-            raise TranscriptUnavailableError(
-                "No transcript available for this video (transcripts disabled or not found)"
-            ) from exc
-        except VideoUnavailable as exc:
-            raise TranscriptUnavailableError(
-                "Video is private, unavailable, or cannot be accessed"
-            ) from exc
-        except CouldNotRetrieveTranscript as exc:
-            # Step: Catch-all for other transcript retrieval failures from the library.
+
+        steps = [
+            lambda: self._youtube_api_get_transcript(video_id, proxies, cookies_path),
+            lambda: self._youtube_api_list_transcripts_fetch(video_id, proxies, cookies_path),
+            lambda: self._ytdlp_fetch_transcript_entries(video_id, nocheckcertificate=False),
+            lambda: self._ytdlp_fetch_transcript_entries(video_id, nocheckcertificate=True),
+        ]
+
+        last_exc: BaseException | None = None
+        for fn in steps:
+            try:
+                return _run_with_timeout(fn)
+            except concurrent.futures.TimeoutError as exc:
+                raise TranscriptFetchTimeoutError(
+                    f"Network timeout while fetching transcript (>{self._fetch_timeout_s:.0f}s)"
+                ) from exc
+            except VideoUnavailable as exc:
+                raise TranscriptUnavailableError(
+                    "Video is private, unavailable, or cannot be accessed"
+                ) from exc
+            except (TranscriptsDisabled, NoTranscriptFound) as exc:
+                last_exc = exc
+                continue
+            except (CouldNotRetrieveTranscript, ParseError, TranscriptUnavailableError) as exc:
+                last_exc = exc
+                continue
+            except Exception as exc:
+                last_exc = exc
+                continue
+
+        if last_exc is not None:
+            if isinstance(last_exc, (TranscriptsDisabled, NoTranscriptFound)):
+                raise TranscriptUnavailableError(
+                    "No transcript available for this video (transcripts disabled or not found)"
+                ) from last_exc
             raise TranscriptUnavailableError(
                 "Unable to retrieve transcript for this video"
-            ) from exc
-        except ParseError as exc:
-            # Step: YouTube sometimes returns empty/blocked pages that the library can’t parse as XML.
-            # Step: Fallback to yt-dlp captions extraction before declaring failure.
-            return self._fetch_transcript_entries_with_ytdlp(video_id, cause=exc)
-        except Exception as exc:
-            raise TranscriptAgentError(
-                f"Unexpected error while fetching transcript ({type(exc).__name__})"
-            ) from exc
+            ) from last_exc
+        raise TranscriptUnavailableError("Unable to retrieve transcript for this video")
 
-    def _fetch_transcript_entries_with_ytdlp(self, video_id: str, *, cause: Exception) -> list[dict]:
+    def _youtube_api_get_transcript(
+        self,
+        video_id: str,
+        proxies: dict[str, str] | None,
+        cookies_path: str | None,
+    ) -> list[dict]:
+        """youtube-transcript-api: get_transcript with optional proxies and Netscape cookies file."""
+        return YouTubeTranscriptApi.get_transcript(
+            video_id,
+            ("en", "en-US", "en-GB"),
+            proxies=proxies,
+            cookies=cookies_path,
+        )
+
+    def _youtube_api_list_transcripts_fetch(
+        self,
+        video_id: str,
+        proxies: dict[str, str] | None,
+        cookies_path: str | None,
+    ) -> list[dict]:
+        """youtube-transcript-api: list_transcripts then find_transcript / first available."""
+        kwargs: dict = {}
+        if proxies:
+            kwargs["proxies"] = proxies
+        if cookies_path:
+            kwargs["cookies"] = cookies_path
+        transcript_list = YouTubeTranscriptApi.list_transcripts(video_id, **kwargs)
+        try:
+            transcript = transcript_list.find_transcript(["en", "en-US", "en-GB"])
+        except Exception:
+            try:
+                transcript = next(iter(transcript_list))
+            except StopIteration as exc:
+                raise TranscriptUnavailableError(
+                    "No transcript available for this video (no transcript tracks returned)"
+                ) from exc
+        return transcript.fetch()
+
+    def _build_ytdlp_opts(self, *, nocheckcertificate: bool) -> dict:
         """
-        Fallback transcript fetcher using yt-dlp when youtube-transcript-api cannot parse.
-
-        Args:
-            video_id: 11-character YouTube ID.
-            cause: The exception that triggered fallback (for diagnostics).
-
-        Returns:
-            Transcript entries as dicts with `text`, `start`, `duration`.
-
-        Steps:
-            1. Use yt-dlp to extract available subtitles/automatic captions metadata.
-            2. Choose a language (prefer English; otherwise first available).
-            3. Choose a subtitle format (prefer VTT).
-            4. Download the subtitle URL with requests and parse into cue entries.
-
-        Raises:
-            TranscriptUnavailableError: If captions cannot be extracted or parsed.
+        yt-dlp options tuned for caption extraction without downloading video.
+        Cookies file (YTDLP_COOKIE_FILE) helps when YouTube blocks datacenter IPs.
         """
-        video_url = f"https://www.youtube.com/watch?v={video_id}"
-
-        ydl_opts = {
-            # Step: Metadata only — we download subtitles ourselves from the returned URLs.
+        opts: dict = {
+            "writesubtitles": True,
+            "writeautomaticsub": True,
+            "subtitlesformat": "vtt",
+            "skip_download": True,
             "quiet": True,
             "no_warnings": True,
-            "skip_download": True,
             "noplaylist": True,
+            "extractor_args": {"youtube": {"skip": ["dash", "hls"]}},
+            "http_headers": {
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                ),
+                "Accept-Language": "en-US,en;q=0.9",
+            },
         }
+        if nocheckcertificate:
+            opts["nocheckcertificate"] = True
+
+        cookie_path = self._cookie_file_path()
+        if cookie_path:
+            opts["cookiefile"] = cookie_path
+
+        return opts
+
+    def _ytdlp_fetch_transcript_entries(self, video_id: str, *, nocheckcertificate: bool) -> list[dict]:
+        """
+        Fetch captions via yt-dlp metadata + HTTP download of VTT URL.
+
+        Raises:
+            TranscriptUnavailableError: On failure to obtain usable cues.
+        """
+        video_url = f"https://www.youtube.com/watch?v={video_id}"
+        ydl_opts = self._build_ytdlp_opts(nocheckcertificate=nocheckcertificate)
 
         try:
             with YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(video_url, download=False)
         except DownloadError as exc:
             raise TranscriptUnavailableError(
-                "Unable to retrieve transcript via yt-dlp fallback (video may be unavailable)"
+                "Unable to retrieve transcript via yt-dlp (video may be unavailable or blocked)"
             ) from exc
         except Exception as exc:
             raise TranscriptUnavailableError(
-                "Unable to retrieve transcript via yt-dlp fallback"
+                "Unable to retrieve transcript via yt-dlp"
             ) from exc
 
         subtitles = info.get("subtitles") or {}
         auto = info.get("automatic_captions") or {}
-
-        # Step: Prefer human subtitles; fall back to automatic captions.
         captions_source = subtitles if subtitles else auto
         if not captions_source:
             raise TranscriptUnavailableError(
                 "No transcript available for this video (no subtitles or automatic captions found)"
-            ) from cause
+            )
 
-        # Step: Prefer English if available; otherwise pick the first language key.
         lang = "en" if "en" in captions_source else next(iter(captions_source.keys()))
         formats = captions_source.get(lang) or []
         if not formats:
             raise TranscriptUnavailableError(
                 "No transcript available for this video (captions metadata missing formats)"
-            ) from cause
+            )
 
-        # Step: Prefer VTT; otherwise take the first format.
         chosen = None
         for f in formats:
             if f.get("ext") == "vtt":
@@ -254,11 +354,21 @@ class TranscriptAgent:
         ext = chosen.get("ext") or ""
         if not sub_url:
             raise TranscriptUnavailableError(
-                "Unable to retrieve transcript via yt-dlp fallback (missing subtitle URL)"
-            ) from cause
+                "Unable to retrieve transcript via yt-dlp (missing subtitle URL)"
+            )
 
         try:
-            resp = requests.get(sub_url, timeout=self._fetch_timeout_s)
+            resp = requests.get(
+                sub_url,
+                timeout=self._fetch_timeout_s,
+                headers={
+                    "User-Agent": (
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                        "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                    ),
+                    "Accept-Language": "en-US,en;q=0.9",
+                },
+            )
             resp.raise_for_status()
             data = resp.text
         except requests.Timeout as exc:
@@ -267,21 +377,20 @@ class TranscriptAgent:
             ) from exc
         except Exception as exc:
             raise TranscriptUnavailableError(
-                "Unable to download transcript captions via yt-dlp fallback"
+                "Unable to download transcript captions via yt-dlp"
             ) from exc
 
         if ext == "vtt" or data.lstrip().startswith("WEBVTT"):
             entries = self._parse_vtt_to_entries(data)
         else:
-            # Step: Keep implementation tight — VTT is the most common. If needed, we can extend later.
             raise TranscriptUnavailableError(
-                f"yt-dlp fallback returned unsupported caption format '{ext}' (expected vtt)"
-            ) from cause
+                f"yt-dlp returned unsupported caption format '{ext}' (expected vtt)"
+            )
 
         if not entries:
             raise TranscriptUnavailableError(
                 "Transcript captions were downloaded but contained no usable cues"
-            ) from cause
+            )
 
         return entries
 
