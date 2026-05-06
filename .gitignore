@@ -3,6 +3,7 @@ backend/.venv/
 backend/__pycache__/
 *.py[cod]
 .pytest_cache/
+backend/chroma_db/
 
 # Environment
 backend/.env

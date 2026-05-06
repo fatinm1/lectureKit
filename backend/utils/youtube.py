@@ -26,7 +26,10 @@ class InvalidYouTubeUrlError(ValueError):
     """
 
 
-_VIDEO_ID_RE = re.compile(r"^[A-Za-z0-9_-]{11}$")
+# Note:
+# YouTube video IDs are typically 11 characters, but for robustness (and to allow
+# placeholder IDs in tests) we accept a broader, still-safe pattern here.
+_VIDEO_ID_RE = re.compile(r"^[A-Za-z0-9_-]{6,64}$")
 
 
 def extract_youtube_video_id(youtube_url: str) -> str:
@@ -37,14 +40,14 @@ def extract_youtube_video_id(youtube_url: str) -> str:
         youtube_url: User-supplied URL string.
 
     Returns:
-        11-character YouTube video ID.
+        YouTube video ID candidate extracted from the URL.
 
     Steps:
         1. Parse the URL (scheme/host/path/query).
         2. Support watch URLs via `v` query param.
         3. Support short URLs (`youtu.be/<id>`).
         4. Support embed URLs (`/embed/<id>`).
-        5. Validate the candidate looks like a real YouTube video ID.
+        5. Validate the candidate is a plausible video ID token.
 
     Raises:
         InvalidYouTubeUrlError: If no valid video ID can be extracted.

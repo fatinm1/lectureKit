@@ -45,6 +45,15 @@ export function ProcessUrlPanel(): JSX.Element {
     setIsSubmitting(true);
 
     try {
+      // Step: Provide a friendly client-side check so users get immediate feedback.
+      try {
+        // eslint-disable-next-line no-new
+        new URL(url);
+      } catch {
+        setStatusMessage("Please paste a valid YouTube URL (e.g. https://www.youtube.com/watch?v=...).");
+        return;
+      }
+
       const endpoint = `${getApiBaseUrl()}/process`;
       const response = await fetch(endpoint, {
         method: "POST",
@@ -61,11 +70,23 @@ export function ProcessUrlPanel(): JSX.Element {
       });
 
       if (!response.ok) {
-        const detail =
-          payload && typeof payload === "object" && "detail" in payload
-            ? JSON.stringify((payload as { detail: unknown }).detail)
-            : response.statusText;
-        setStatusMessage(`Request failed (${response.status}): ${detail}`);
+        const detailValue =
+          payload && typeof payload === "object" && "detail" in payload ? (payload as { detail: unknown }).detail : null;
+
+        const friendly =
+          response.status === 422
+            ? "Please paste a valid YouTube URL."
+            : response.status === 404
+              ? "No transcript available for that video (private/unavailable/transcripts disabled)."
+              : response.status === 504
+                ? "The transcript fetch timed out. Please try again."
+                : "Request failed. Please try again.";
+
+        // Step: Keep a short technical tail for debugging without dumping raw JSON.
+        const technicalTail =
+          detailValue && typeof detailValue === "string" ? ` (${detailValue})` : "";
+
+        setStatusMessage(`${friendly}${technicalTail}`);
         return;
       }
 
@@ -107,11 +128,12 @@ export function ProcessUrlPanel(): JSX.Element {
           <input
             id="youtube-url-app"
             name="youtube-url-app"
-            type="url"
+            type="text"
             required
             placeholder="https://www.youtube.com/watch?v=..."
             value={url}
             onChange={(e) => setUrl(e.target.value)}
+            inputMode="url"
             autoComplete="off"
             className="min-h-[44px] flex-1 rounded-linear border border-marketing-divider bg-surface-1 px-sm py-xs text-body text-ink outline-none transition duration-interaction ease-out placeholder:text-ink-tertiary focus:border-primary-focus focus:shadow-focus-glow"
           />

@@ -10,7 +10,8 @@
     "dev:stable": "npm run clean && npm run build && next start -p 3000",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "test:smoke": "node ./scripts/smoke-browser.mjs"
   },
   "engines": {
     "node": ">=18 <=22"
@@ -21,6 +22,7 @@
     "react-dom": "^18"
   },
   "devDependencies": {
+    "playwright": "^1.55.0",
     "@types/node": "^20",
     "@types/react": "^18",
     "@types/react-dom": "^18",
