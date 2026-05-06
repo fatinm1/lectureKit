@@ -685,6 +685,12 @@ export default function StudyPage(): JSX.Element {
                         </button>
                       </div>
 
+                      {language !== "en" ? (
+                        <p className="text-caption text-marketing-muted">
+                          Search works best in English. You can type your question in English to find relevant moments.
+                        </p>
+                      ) : null}
+
                       {isSearching ? (
                         <p className="text-secondary text-marketing-muted motion-safe:animate-pulse motion-reduce:animate-none">
                           Searching…

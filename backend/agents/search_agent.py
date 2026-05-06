@@ -15,6 +15,7 @@ Data flow: Consumes Transcript Agent chunks; serves `/search` or dashboard.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Sequence
@@ -54,7 +55,7 @@ class SearchAgent:
         self,
         *,
         model_name: str = "all-MiniLM-L6-v2",
-        persist_dir: str | Path = Path(__file__).resolve().parents[1] / "chroma_db",
+        persist_dir: str | Path | None = None,
     ) -> None:
         """
         Initialize embedding model and persistent Chroma client.
@@ -64,7 +65,13 @@ class SearchAgent:
             persist_dir: Persistent directory for ChromaDB.
         """
         self.model = SentenceTransformer(model_name)
-        self._persist_dir = Path(persist_dir)
+
+        # Step: Allow deploy platforms (e.g. Railway) to mount a persistent volume and
+        # configure Chroma's storage path via env var, while keeping a safe local default.
+        env_dir = (os.getenv("CHROMA_DB_PATH") or "").strip()
+        resolved_dir = persist_dir if persist_dir is not None else (env_dir or "./chroma_db")
+
+        self._persist_dir = Path(resolved_dir)
         self._persist_dir.mkdir(parents=True, exist_ok=True)
         self.client = chromadb.PersistentClient(path=str(self._persist_dir))
 
