@@ -15,7 +15,7 @@ import logging
 import os
 import time
 import traceback
-from typing import List
+from typing import List, Optional
 from urllib.parse import urlparse
 
 from dotenv import load_dotenv
@@ -92,12 +92,28 @@ app.add_middleware(
 
 # Step: Create the Agent 1 instance once; it is stateless and safe to reuse per request.
 transcript_agent = TranscriptAgent()
-# Step: Create the Agent 2 instance once; it holds a shared Anthropic client.
-content_agent = ContentAgent()
 # Step: Create Agent 3 once; it loads a local embedding model and persistent Chroma client.
 search_agent = SearchAgent()
-# Step: Create TranslateAgent once; used for bilingual UI translations.
-translate_agent = TranslateAgent()
+
+# Step: Lazy-init Claude-backed agents so Railway healthchecks pass before ANTHROPIC_API_KEY is set.
+_content_agent: Optional[ContentAgent] = None
+_translate_agent: Optional[TranslateAgent] = None
+
+
+def get_content_agent() -> ContentAgent:
+    """Return a singleton ContentAgent; raises ContentAgentError if API key is missing."""
+    global _content_agent
+    if _content_agent is None:
+        _content_agent = ContentAgent()
+    return _content_agent
+
+
+def get_translate_agent() -> TranslateAgent:
+    """Return a singleton TranslateAgent; raises TranslateAgentError if API key is missing."""
+    global _translate_agent
+    if _translate_agent is None:
+        _translate_agent = TranslateAgent()
+    return _translate_agent
 
 
 @app.get("/health")
@@ -111,8 +127,13 @@ def health_check() -> dict[str, str]:
     Steps:
         1. Return a tiny payload without touching external services.
     """
-    # Step: Keep this endpoint dependency-free so orchestrators can ping cheaply.
-    return {"status": "ok", "service": "cloudforce-frontier-api"}
+    # Step: Keep this endpoint cheap; do not load embedding models or call Claude here.
+    key_ok = bool((os.getenv("ANTHROPIC_API_KEY") or "").strip())
+    return {
+        "status": "ok",
+        "service": "cloudforce-frontier-api",
+        "anthropic_configured": key_ok,
+    }
 
 
 @app.post("/process", response_model=ProcessYouTubeResponse)
@@ -139,7 +160,7 @@ def process_youtube_lecture(payload: ProcessYouTubeRequest) -> ProcessYouTubeRes
         t0 = time.perf_counter()
         video_id, chunks = transcript_agent.process(youtube_url_str)
         t1 = time.perf_counter()
-        content_result = content_agent.process(chunks)
+        content_result = get_content_agent().process(chunks)
         t2 = time.perf_counter()
 
         logger.info(
@@ -250,7 +271,7 @@ def translate_content(payload: TranslateRequest) -> TranslateResponse:
         raise HTTPException(status_code=422, detail="target_language must be a non-empty string.")
 
     try:
-        translated = translate_agent.translate(content=payload.content, target_language=target)
+        translated = get_translate_agent().translate(content=payload.content, target_language=target)
     except TranslateAgentError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     except Exception as exc:
