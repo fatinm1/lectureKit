@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 import os
 import time
+import traceback
 from typing import List
 from urllib.parse import urlparse
 
@@ -31,12 +32,15 @@ from agents.transcript_agent import (
     TranscriptFetchTimeoutError,
     TranscriptUnavailableError,
 )
+from agents.translate_agent import TranslateAgent, TranslateAgentError
 from models.schemas import (
     ProcessYouTubeRequest,
     ProcessYouTubeResponse,
     SearchRequest,
     SearchResponse,
     SearchResult,
+    TranslateRequest,
+    TranslateResponse,
 )
 from utils.youtube import InvalidYouTubeUrlError
 from utils.youtube import extract_youtube_video_id
@@ -92,6 +96,8 @@ transcript_agent = TranscriptAgent()
 content_agent = ContentAgent()
 # Step: Create Agent 3 once; it loads a local embedding model and persistent Chroma client.
 search_agent = SearchAgent()
+# Step: Create TranslateAgent once; used for bilingual UI translations.
+translate_agent = TranslateAgent()
 
 
 @app.get("/health")
@@ -227,3 +233,29 @@ def search_video(payload: SearchRequest) -> SearchResponse:
     ]
 
     return SearchResponse(results=results, query=query, video_id=video_id)
+
+
+@app.post("/translate", response_model=TranslateResponse)
+def translate_content(payload: TranslateRequest) -> TranslateResponse:
+    """
+    Translate structured study materials into a target language.
+
+    Requirements:
+    - Single Claude call
+    - Return JSON only with same structure as input
+    - Do not translate timestamps / numeric fields
+    """
+    target = (payload.target_language or "").strip()
+    if not target:
+        raise HTTPException(status_code=422, detail="target_language must be a non-empty string.")
+
+    try:
+        translated = translate_agent.translate(content=payload.content, target_language=target)
+    except TranslateAgentError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.error("Translation failed: %s", str(exc))
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail="Unexpected server error") from exc
+
+    return TranslateResponse(content=translated)

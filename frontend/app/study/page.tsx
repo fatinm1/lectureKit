@@ -15,7 +15,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { LectureSession } from "../../types/lecture";
 import { formatTimestamp } from "../../utils/format";
@@ -29,6 +29,24 @@ type SearchResult = {
   chunk_index: number;
   relevance_score: number;
 };
+
+type TranslatedContentPayload = {
+  outline?: LectureSession["outline"];
+  summary_90s?: string;
+  summary_5min?: string;
+  summary_full?: string;
+  flashcards?: LectureSession["flashcards"];
+};
+
+type LanguageCode = "en" | "es" | "fr" | "bn" | "ar";
+
+const LANGUAGE_OPTIONS: Array<{ code: LanguageCode; label: string; target: string | null }> = [
+  { code: "en", label: "English", target: null },
+  { code: "es", label: "Spanish", target: "Spanish" },
+  { code: "fr", label: "French", target: "French" },
+  { code: "bn", label: "Bengali", target: "Bengali" },
+  { code: "ar", label: "Arabic", target: "Arabic" },
+];
 
 function formatProcessedAt(iso: string): string {
   const date = new Date(iso);
@@ -61,6 +79,7 @@ function isActivationKey(key: string): boolean {
 
 export default function StudyPage(): JSX.Element {
   const router = useRouter();
+  const [baseSession, setBaseSession] = useState<LectureSession | null>(null);
   const [session, setSession] = useState<LectureSession | null>(null);
   const [activeOutlineIndex, setActiveOutlineIndex] = useState(0);
   const [summaryDepth, setSummaryDepth] = useState<"90s" | "5min" | "full">("90s");
@@ -73,6 +92,13 @@ export default function StudyPage(): JSX.Element {
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
+
+  const [language, setLanguage] = useState<LanguageCode>("en");
+  const [isTranslating, setIsTranslating] = useState(false);
+  const [translateError, setTranslateError] = useState<string | null>(null);
+
+  const translationCacheRef = useRef<Map<LanguageCode, Partial<LectureSession>>>(new Map());
+  const searchTranslationCacheRef = useRef<Map<string, SearchResult[]>>(new Map());
 
   useEffect(() => {
     const raw = window.localStorage.getItem("lecturekit_session");
@@ -88,6 +114,7 @@ export default function StudyPage(): JSX.Element {
         return;
       }
 
+      setBaseSession(parsed);
       setSession(parsed);
       setActiveOutlineIndex(0);
     } catch {
@@ -138,6 +165,90 @@ export default function StudyPage(): JSX.Element {
     setIsCardFlipped(false);
   }, [cardIndex, rightTab]);
 
+  async function translateTo(nextLang: LanguageCode): Promise<void> {
+    if (!baseSession) return;
+    setTranslateError(null);
+
+    if (nextLang === "en") {
+      setLanguage("en");
+      setSession(baseSession);
+      return;
+    }
+
+    const cached = translationCacheRef.current.get(nextLang);
+    if (cached) {
+      setLanguage(nextLang);
+      setSession({ ...baseSession, ...cached });
+      return;
+    }
+
+    const option = LANGUAGE_OPTIONS.find((o) => o.code === nextLang);
+    if (!option?.target) return;
+
+    setIsTranslating(true);
+    try {
+      const endpoint = `${getApiBaseUrl()}/translate`;
+      const content = {
+        outline: baseSession.outline,
+        summary_90s: baseSession.summary_90s,
+        summary_5min: baseSession.summary_5min,
+        summary_full: baseSession.summary_full,
+        flashcards: baseSession.flashcards,
+      };
+      const requestBody = { content, target_language: option.target };
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(requestBody),
+      });
+      const payload = (await response.json().catch(() => null)) as
+        | { content?: unknown; detail?: string }
+        | null;
+      if (!response.ok) {
+        setTranslateError("Translation failed. Showing English content.");
+        setLanguage("en");
+        setSession(baseSession);
+        return;
+      }
+
+      const translated = payload?.content;
+      if (!translated || typeof translated !== "object") {
+        setTranslateError("Translation returned an invalid payload.");
+        setLanguage("en");
+        setSession(baseSession);
+        return;
+      }
+
+      const translatedObj = translated as TranslatedContentPayload;
+      const patch: Partial<LectureSession> = {
+        outline: Array.isArray(translatedObj.outline) ? translatedObj.outline : baseSession.outline,
+        summary_90s:
+          typeof translatedObj.summary_90s === "string"
+            ? translatedObj.summary_90s
+            : baseSession.summary_90s,
+        summary_5min:
+          typeof translatedObj.summary_5min === "string"
+            ? translatedObj.summary_5min
+            : baseSession.summary_5min,
+        summary_full:
+          typeof translatedObj.summary_full === "string"
+            ? translatedObj.summary_full
+            : baseSession.summary_full,
+        flashcards: Array.isArray(translatedObj.flashcards) ? translatedObj.flashcards : baseSession.flashcards,
+      };
+
+      translationCacheRef.current.set(nextLang, patch);
+      setLanguage(nextLang);
+      setSession({ ...baseSession, ...patch });
+    } catch {
+      setTranslateError("Network error — translation service unavailable.");
+      setLanguage("en");
+      setSession(baseSession);
+    } finally {
+      setIsTranslating(false);
+    }
+  }
+
   async function runSearch(): Promise<void> {
     if (!session) return;
     const q = searchQuery.trim();
@@ -175,7 +286,48 @@ export default function StudyPage(): JSX.Element {
       }
 
       const results = payload && typeof payload === "object" && "results" in payload ? payload.results : [];
-      setSearchResults(Array.isArray(results) ? results : []);
+      const baseResults = Array.isArray(results) ? results : [];
+
+      // Step: Translate search result text if a non-English language is selected.
+      if (language !== "en" && baseSession) {
+        const cacheKey = `${language}:${q}`;
+        const cached = searchTranslationCacheRef.current.get(cacheKey);
+        if (cached) {
+          setSearchResults(cached);
+          return;
+        }
+
+        const option = LANGUAGE_OPTIONS.find((o) => o.code === language);
+        if (option?.target) {
+          try {
+            const tEndpoint = `${getApiBaseUrl()}/translate`;
+            const tResp = await fetch(tEndpoint, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                content: { results: baseResults.map((r) => ({ text: r.text })) },
+                target_language: option.target,
+              }),
+            });
+            const tPayload = (await tResp.json().catch(() => null)) as { content?: unknown } | null;
+            const tContent = tPayload?.content as { results?: Array<{ text?: unknown }> } | undefined;
+            const tResults = tContent?.results;
+            if (tResp.ok && Array.isArray(tResults) && tResults.length === baseResults.length) {
+              const merged = baseResults.map((r: SearchResult, i: number) => ({
+                ...r,
+                text: typeof tResults[i]?.text === "string" ? tResults[i].text : r.text,
+              }));
+              searchTranslationCacheRef.current.set(cacheKey, merged);
+              setSearchResults(merged);
+              return;
+            }
+          } catch {
+            // ignore translation failure; fall back to English results
+          }
+        }
+      }
+
+      setSearchResults(baseResults);
     } catch {
       setSearchError("Network error — is the FastAPI server running?");
       setSearchResults([]);
@@ -184,7 +336,7 @@ export default function StudyPage(): JSX.Element {
     }
   }
 
-  if (!session) {
+  if (!session || !baseSession) {
     return (
       <main className="min-h-screen bg-canvas text-ink flex items-center justify-center px-md">
         <p className="text-secondary text-marketing-muted">Loading session…</p>
@@ -207,15 +359,33 @@ export default function StudyPage(): JSX.Element {
             <span>LectureKit</span>
           </Link>
 
-          {/* Placeholder for Part 6 */}
-          <select
-            aria-label="Language"
-            className="h-9 rounded-linear border border-marketing-divider bg-canvas px-sm text-secondary text-ink transition duration-interaction ease-out focus:border-primary-focus focus:shadow-focus-glow"
-            defaultValue="en"
-          >
-            <option value="en">English</option>
-          </select>
+          <div className="flex items-center gap-sm">
+            {isTranslating ? (
+              <span
+                aria-label="Translating"
+                className="h-4 w-4 rounded-full border border-marketing-divider border-t-primary motion-safe:animate-spin motion-reduce:animate-none"
+              />
+            ) : null}
+
+            <select
+              aria-label="Language"
+              value={language}
+              onChange={(e) => translateTo(e.target.value as LanguageCode)}
+              className="h-9 rounded-linear border border-marketing-divider bg-canvas px-sm text-secondary text-ink transition duration-interaction ease-out focus:border-primary-focus focus:shadow-focus-glow"
+            >
+              {LANGUAGE_OPTIONS.map((opt) => (
+                <option key={opt.code} value={opt.code}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
+        {translateError ? (
+          <div className="mx-auto max-w-content px-md pb-sm">
+            <p className="text-caption text-[#d16a6a]">{translateError}</p>
+          </div>
+        ) : null}
       </header>
 
       {/* Processing stats bar */}

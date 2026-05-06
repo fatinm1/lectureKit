@@ -215,32 +215,64 @@ class ContentAgent:
             3. If it fails, ask Claude once to output corrected JSON only.
             4. If it fails again, raise ContentAgentError with raw response.
         """
-        cleaned = self._strip_json_fences(raw_text)
         try:
-            return json.loads(cleaned)
+            return self._parse_json_response(raw_text)
         except Exception:
             repair_prompt = self._build_repair_prompt(transcript=transcript, bad_output=raw_text)
             repaired_text = self._call_claude(repair_prompt)
-            repaired_clean = self._strip_json_fences(repaired_text)
             try:
-                return json.loads(repaired_clean)
+                return self._parse_json_response(repaired_text)
             except Exception as exc:
                 raise ContentAgentError(
                     "Claude returned malformed JSON after one repair retry. Raw response:\n"
                     + raw_text
                 ) from exc
 
-    def _strip_json_fences(self, text: str) -> str:
+    def _parse_json_response(self, text: str) -> dict:
         """
-        Strip accidental markdown code fences/backticks from Claude output.
+        Parse JSON from Claude response with multiple fallback strategies.
+
+        Claude sometimes wraps JSON in markdown fences, adds preamble text,
+        or includes trailing explanation. This handles all those cases.
         """
-        s = (text or "").strip()
-        # Step: Remove triple-backtick fenced blocks if present.
-        s = re.sub(r"^```(?:json)?\s*", "", s, flags=re.IGNORECASE)
-        s = re.sub(r"\s*```$", "", s)
-        # Step: Also remove stray single backticks around whole payload.
-        s = s.strip("` \n\t")
-        return s.strip()
+        raw = text or ""
+
+        # Strategy 1: Aggressive markdown fence removal then parse
+        cleaned = re.sub(r"```[a-zA-Z]*\n?", "", raw)
+        cleaned = cleaned.replace("```", "")
+        cleaned = cleaned.strip().strip("` \n\t")
+        try:
+            return json.loads(cleaned)
+        except json.JSONDecodeError:
+            pass
+
+        # Strategy 2: Find the outermost JSON object by locating first { and last }
+        start = cleaned.find("{")
+        end = cleaned.rfind("}")
+        if start != -1 and end != -1 and end > start:
+            try:
+                return json.loads(cleaned[start : end + 1])
+            except json.JSONDecodeError:
+                pass
+
+        # Strategy 3: Try original text (no cleaning) then parse
+        try:
+            return json.loads(raw.strip())
+        except json.JSONDecodeError:
+            pass
+
+        start = raw.find("{")
+        end = raw.rfind("}")
+        if start != -1 and end != -1 and end > start:
+            try:
+                return json.loads(raw[start : end + 1])
+            except json.JSONDecodeError:
+                pass
+
+        raise ContentAgentError(
+            "Could not parse JSON after all strategies. "
+            f"First 300 chars of response: {raw[:300]}"
+        )
 
     def _build_repair_prompt(self, *, transcript: str, bad_output: str) -> str:
         """

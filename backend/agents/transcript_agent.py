@@ -493,6 +493,7 @@ class TranscriptAgent:
         - Remove filler words: um, uh, you know, like, basically, actually, literally
         - Strip HTML tags
         - Collapse newlines/whitespace
+        - Collapse immediate duplicate sentences/phrases (common caption artifact)
         """
         # Step: Strip HTML tags if present.
         without_html = re.sub(r"<[^>]+>", " ", text)
@@ -507,7 +508,82 @@ class TranscriptAgent:
         cleaned = cleaned.replace("\n", " ").replace("\r", " ")
         cleaned = re.sub(r"\s+", " ", cleaned).strip()
 
-        return cleaned
+        # Step: Remove consecutive duplicate sentences (e.g. the same caption line repeated).
+        cleaned = self._dedupe_consecutive_sentences(cleaned)
+        # Step: Remove consecutive duplicate phrases within a sentence (e.g. phrase repeated 2-3 times).
+        cleaned = self._dedupe_consecutive_phrases(cleaned)
+
+        return cleaned.strip()
+
+    def _dedupe_consecutive_sentences(self, text: str) -> str:
+        """
+        Collapse immediate duplicate sentences.
+
+        Example:
+            "We do X. We do X. Then Y." -> "We do X. Then Y."
+        """
+        if not text:
+            return text
+
+        # Step: Split into sentence-like parts while keeping punctuation boundaries.
+        parts = re.split(r"(?<=[.!?])\s+", text)
+        out: list[str] = []
+        prev_norm: str | None = None
+        for p in parts:
+            s = p.strip()
+            if not s:
+                continue
+            norm = re.sub(r"\s+", " ", s).strip().lower()
+            if prev_norm is not None and norm == prev_norm:
+                continue
+            out.append(s)
+            prev_norm = norm
+        return " ".join(out)
+
+    def _dedupe_consecutive_phrases(self, text: str) -> str:
+        """
+        Remove immediate repeated word-phrases inside a line.
+
+        This targets yt-dlp/VTT artifacts where a phrase repeats back-to-back:
+            "this is important this is important this is important" -> "this is important"
+        """
+        if not text:
+            return text
+
+        words = text.split()
+        if len(words) < 6:
+            return text
+
+        out: list[str] = []
+        i = 0
+        # Step: Consider phrases between 3 and 12 words, preferring longer matches first.
+        min_n = 3
+        max_n = 12
+
+        while i < len(words):
+            matched = False
+
+            # Step: Try to find the longest immediate repetition starting at i.
+            for n in range(min(max_n, len(words) - i), min_n - 1, -1):
+                a = words[i : i + n]
+                j = i + n
+                repeat_count = 0
+                while j + n <= len(words) and words[j : j + n] == a:
+                    repeat_count += 1
+                    j += n
+
+                if repeat_count > 0:
+                    # Keep only one instance of the phrase, skip the immediate repeats.
+                    out.extend(a)
+                    i = j
+                    matched = True
+                    break
+
+            if not matched:
+                out.append(words[i])
+                i += 1
+
+        return " ".join(out)
 
     def _is_sentence_end(self, token: str) -> bool:
         """

@@ -12,7 +12,7 @@ by agent modules as pipelines stabilize.
 
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field, HttpUrl
 
@@ -122,6 +122,25 @@ class SearchResponse(BaseModel):
     results: List[SearchResult]
     query: str
     video_id: str
+
+
+class TranslateRequest(BaseModel):
+    """
+    Request body for POST `/translate`.
+
+    Data flow:
+    - Client sends study materials (outline + summaries + flashcards) and a target language.
+    - Backend returns translated content with the same structure.
+    """
+
+    content: Dict[str, Any] = Field(..., description="Content object to translate (JSON).")
+    target_language: str = Field(..., description="Target language (e.g. Spanish, French).")
+
+
+class TranslateResponse(BaseModel):
+    """Response for POST `/translate` with translated content JSON."""
+
+    content: Dict[str, Any]
 
 
 class ProcessYouTubeError(BaseModel):
