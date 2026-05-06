@@ -117,7 +117,7 @@ def get_translate_agent() -> TranslateAgent:
 
 
 @app.get("/health")
-def health_check() -> dict[str, str]:
+def health_check() -> dict[str, str | bool]:
     """
     Liveness probe for deploy targets and local sanity checks.
 
