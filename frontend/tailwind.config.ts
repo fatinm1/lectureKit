@@ -102,6 +102,16 @@ const config: Config = {
           "0%, 100%": { transform: "scale(1)" },
           "50%": { transform: "scale(1.08)" },
         },
+        /**
+         * Hero glow float — slow organic positional drift (no size/color/opacity changes).
+         * Matches the marketing spec: translate between waypoints over an 8s loop.
+         */
+        "hero-glow-float": {
+          "0%, 100%": { transform: "translate(0%, 10%) translateZ(0)" },
+          "25%": { transform: "translate(15%, -5%) translateZ(0)" },
+          "50%": { transform: "translate(-15%, -10%) translateZ(0)" },
+          "75%": { transform: "translate(10%, 15%) translateZ(0)" },
+        },
         /** Hero grid — vertical background-position drift (one 60px cell per loop, seamless repeat). */
         "hero-grid-scroll": {
           /**
@@ -115,6 +125,7 @@ const config: Config = {
       animation: {
         "fade-in": "fade-in var(--tw-duration, 300ms) ease-out forwards",
         "hero-glow-pulse": "hero-glow-pulse 4s ease-in-out infinite",
+        "hero-glow-float": "hero-glow-float 8s ease-in-out infinite",
         "hero-grid-scroll": "hero-grid-scroll 3s linear infinite",
       },
       boxShadow: {

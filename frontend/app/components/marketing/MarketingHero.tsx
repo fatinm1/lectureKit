@@ -35,11 +35,10 @@ export function MarketingHero(): JSX.Element {
           Animating filter+transform together commonly freezes Safari/WebKit tabs.
         */}
         <div className="absolute bottom-[-12%] left-1/2 z-0 h-[min(52vh,520px)] w-[min(112vw,920px)] -translate-x-1/2 opacity-90 blur-[48px]">
-          {/* motion-safe wrapper: pulse scales only this layer (blur stays outside). */}
+          {/* motion-safe wrapper: float moves position only (no size/color/opacity changes). */}
           <div
-            className="h-full w-full origin-center motion-safe:animate-hero-glow-pulse motion-reduce:animate-none"
+            className="h-full w-full motion-safe:animate-hero-glow-float motion-reduce:animate-none"
             style={{
-              transformOrigin: "50% 50%",
               background:
                 "radial-gradient(ellipse at center, rgba(94, 106, 210, 0.55) 0%, rgba(67, 56, 202, 0.28) 42%, rgba(30, 27, 75, 0.08) 62%, transparent 72%)",
             }}
