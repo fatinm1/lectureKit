@@ -177,6 +177,75 @@ class TranscriptAgent:
         """Compatibility helper: ordered proxy list; None means no proxy."""
         return self._youtube_transcript_proxy_url_candidates()
 
+    def _fetch_via_supadata(self, video_id: str) -> list[dict]:
+        """
+        Fetch transcript via Supadata API.
+        Primary method for cloud deployments where YouTube blocks direct access.
+
+        Args:
+            video_id: YouTube video ID
+
+        Returns:
+            List of transcript entries with text, start, duration
+
+        Raises:
+            TranscriptUnavailableError: If Supadata API fails or is not configured.
+        """
+        api_key = (os.getenv("SUPADATA_API_KEY") or "").strip()
+        if not api_key:
+            raise TranscriptUnavailableError("SUPADATA_API_KEY not configured")
+
+        url = "https://api.supadata.ai/v1/youtube/transcript"
+        params = {"videoId": video_id, "text": "false"}
+        headers = {"x-api-key": api_key}
+
+        try:
+            response = requests.get(url, params=params, headers=headers, timeout=30)
+
+            if response.status_code == 404:
+                raise TranscriptUnavailableError(
+                    "Video not found or no transcript available via Supadata"
+                )
+            if response.status_code == 401:
+                raise TranscriptUnavailableError("Invalid Supadata API key")
+            if response.status_code != 200:
+                raise TranscriptUnavailableError(
+                    f"Supadata API error: {response.status_code} {response.text[:100]}"
+                )
+
+            data = response.json()
+            content = data.get("content", [])
+            if not content:
+                raise TranscriptUnavailableError("No transcript content returned from Supadata")
+
+            entries: list[dict] = []
+            for segment in content:
+                text = (segment.get("text") or "").strip()
+                if not text:
+                    continue
+                entries.append(
+                    {
+                        "text": text,
+                        "start": (segment.get("offset", 0) or 0) / 1000.0,
+                        "duration": (segment.get("duration", 5000) or 5000) / 1000.0,
+                    }
+                )
+
+            if not entries:
+                raise TranscriptUnavailableError("Supadata returned empty transcript")
+
+            print(f"Supadata succeeded: {len(entries)} segments for video {video_id}")
+            return entries
+
+        except TranscriptUnavailableError:
+            raise
+        except requests.exceptions.Timeout as exc:
+            raise TranscriptFetchTimeoutError("Supadata API request timed out") from exc
+        except Exception as exc:
+            raise TranscriptUnavailableError(
+                f"Supadata API unexpected error: {str(exc)}"
+            ) from exc
+
     def _transcript_proxies(self) -> dict[str, str] | None:
         """
         Optional HTTP(S) proxies for transcript fetches (youtube-transcript-api, yt-dlp, caption HTTP GET).
@@ -262,6 +331,17 @@ class TranscriptAgent:
         Returns:
             List of transcript entries (dicts with `text`, `start`, `duration`).
         """
+        # Try Supadata first (if configured). They handle bot detection upstream.
+        supadata_key = (os.getenv("SUPADATA_API_KEY") or "").strip()
+        if supadata_key:
+            try:
+                print(f"Trying Supadata API for video: {video_id}")
+                return self._fetch_via_supadata(video_id)
+            except TranscriptFetchTimeoutError:
+                print("Supadata timed out, falling back to direct methods")
+            except TranscriptUnavailableError as exc:
+                print(f"Supadata failed: {str(exc)[:100]}, falling back to direct methods")
+
         cookies_path = self._cookie_file_path()
         proxy_url_candidates = self._get_proxy_list()
         tried_proxies = bool(any(u for u in proxy_url_candidates if u))
