@@ -101,15 +101,24 @@ class TranscriptAgent:
         self._max_words_over_target = max_words_over_target
         self._fetch_timeout_s = fetch_timeout_s
 
-    def _cookie_file_path(self) -> str | None:
-        """
-        Optional Netscape-format cookies file for YouTube (same file works for
-        youtube-transcript-api and yt-dlp). Set YTDLP_COOKIE_FILE or YOUTUBE_COOKIES_PATH in production.
-        """
+    def _cookie_file_candidates(self) -> list[str]:
+        """Ordered paths for Netscape cookies (Railway may write to /tmp via YOUTUBE_COOKIES_BASE64)."""
+        paths: list[str] = []
         for key in ("YTDLP_COOKIE_FILE", "YOUTUBE_COOKIES_PATH", "COOKIES_PATH"):
             raw = (os.getenv(key) or "").strip()
-            if raw and os.path.isfile(raw):
-                return raw
+            if raw:
+                paths.append(raw)
+        paths.extend(("/tmp/cookies.txt", "/data/cookies.txt"))
+        return paths
+
+    def _cookie_file_path(self) -> str | None:
+        """
+        First existing cookies file among env-configured paths and Railway defaults
+        (/tmp/cookies.txt, /data/cookies.txt).
+        """
+        for path in self._cookie_file_candidates():
+            if path and os.path.isfile(path):
+                return path
         return None
 
     def _transcript_proxies(self) -> dict[str, str] | None:
@@ -327,6 +336,7 @@ class TranscriptAgent:
         cookie_path = self._cookie_file_path()
         if cookie_path:
             opts["cookiefile"] = cookie_path
+            print(f"yt-dlp using cookies from: {cookie_path}")
 
         return opts
 
