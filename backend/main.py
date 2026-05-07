@@ -11,6 +11,7 @@ Environment: Loads `backend/.env` via python-dotenv for API keys used in future 
 
 from __future__ import annotations
 
+import base64
 import logging
 import os
 import time
@@ -47,6 +48,20 @@ from utils.youtube import extract_youtube_video_id
 
 # Step: Load environment variables from backend/.env before reading configuration.
 load_dotenv()
+
+# Decode YouTube cookies from base64 on startup (Railway: set YOUTUBE_COOKIES_BASE64 + YTDLP_COOKIE_FILE).
+_cookies_b64 = os.getenv("YOUTUBE_COOKIES_BASE64", "").strip()
+if _cookies_b64:
+    _cookies_path = os.getenv("YTDLP_COOKIE_FILE", "/data/cookies.txt")
+    try:
+        _parent = os.path.dirname(_cookies_path)
+        if _parent:
+            os.makedirs(_parent, exist_ok=True)
+        with open(_cookies_path, "wb") as _f:
+            _f.write(base64.b64decode(_cookies_b64))
+        print(f"YouTube cookies written to {_cookies_path}")
+    except Exception as _e:
+        print(f"Warning: Could not write cookies file: {_e}")
 
 logger = logging.getLogger("lecturekit")
 
