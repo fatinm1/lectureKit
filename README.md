@@ -89,8 +89,10 @@ npm run dev
 - **CORS_ORIGINS**: comma separated list of allowed frontend origins
 - **CHROMA_DB_PATH**: path to persistent ChromaDB storage (default `./chroma_db`)
 - **ANTHROPIC_MODEL**: Claude model to use (default `claude-sonnet-4-6`)
-- **YTDLP_COOKIE_FILE** / **YOUTUBE_COOKIES_PATH** (optional): path to a Netscape `cookies.txt` export — often required on cloud hosts when YouTube rate-limits datacenter IPs
-- **YOUTUBE_TRANSCRIPT_PROXIES** (optional): JSON `{"http":"...","https":"..."}` or a single proxy URL for `youtube-transcript-api`
+- **YTDLP_COOKIE_FILE** / **YOUTUBE_COOKIES_PATH** (optional): path to a Netscape `cookies.txt` (mount a small file on Railway rather than huge base64 env vars). Generate a minimal set locally with `python backend/scripts/extract_yt_cookies.py`
+- **YOUTUBE_PROXY_URL** (optional): one proxy URL used for **all** transcript-related HTTP traffic (`youtube-transcript-api`, `yt-dlp`, VTT download) — typical fix for datacenter IP blocks (e.g. Webshare)
+- **YOUTUBE_PO_TOKEN** / **YOUTUBE_VISITOR_DATA** (optional): passed to yt-dlp’s YouTube extractor for PO-token flows (see [yt-dlp PO Token guide](https://github.com/yt-dlp/yt-dlp/wiki/PO-Token-Guide)); token format is usually like `web.gvs+...`
+- **YOUTUBE_TRANSCRIPT_PROXIES** (optional): JSON `{"http":"...","https":"..."}` or a single proxy URL — used when `YOUTUBE_PROXY_URL` is not set
 
 ### Frontend (`frontend/.env.local`)
 

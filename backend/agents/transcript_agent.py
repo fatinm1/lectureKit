@@ -114,11 +114,17 @@ class TranscriptAgent:
 
     def _transcript_proxies(self) -> dict[str, str] | None:
         """
-        Optional HTTP(S) proxies for youtube-transcript-api (helps when datacenter IPs are blocked).
+        Optional HTTP(S) proxies for transcript fetches (youtube-transcript-api, yt-dlp, caption HTTP GET).
 
-        YOUTUBE_TRANSCRIPT_PROXIES: JSON object {\"http\":\"...\",\"https\":\"...\"} or a single proxy URL.
-        Falls back to HTTPS_PROXY / HTTP_PROXY if set.
+        Priority:
+        1. YOUTUBE_PROXY_URL — single URL (e.g. Webshare) used for both http and https
+        2. YOUTUBE_TRANSCRIPT_PROXIES — JSON {\"http\":\"...\",\"https\":\"...\"} or one URL string
+        3. HTTPS_PROXY / HTTP_PROXY
         """
+        single = (os.getenv("YOUTUBE_PROXY_URL") or "").strip()
+        if single:
+            return {"http": single, "https": single}
+
         raw = (os.getenv("YOUTUBE_TRANSCRIPT_PROXIES") or "").strip()
         if raw:
             try:
@@ -277,8 +283,22 @@ class TranscriptAgent:
     def _build_ytdlp_opts(self, *, nocheckcertificate: bool) -> dict:
         """
         yt-dlp options tuned for caption extraction without downloading video.
-        Cookies file (YTDLP_COOKIE_FILE) helps when YouTube blocks datacenter IPs.
+
+        Optional env (see README): YOUTUBE_PROXY_URL, YOUTUBE_PO_TOKEN, YOUTUBE_VISITOR_DATA,
+        YTDLP_COOKIE_FILE / cookie path vars for a minimal cookies.txt on disk.
         """
+        youtube_extras: dict[str, object] = {
+            "skip": ["dash", "hls"],
+            "player_skip": ["webpage", "configs", "js"],
+        }
+        po_token = (os.getenv("YOUTUBE_PO_TOKEN") or "").strip()
+        if po_token:
+            # yt-dlp expects iterable values; format e.g. web.gvs+BASE64... (see yt-dlp PO Token guide).
+            youtube_extras["po_token"] = [po_token]
+        visitor_data = (os.getenv("YOUTUBE_VISITOR_DATA") or "").strip()
+        if visitor_data:
+            youtube_extras["visitor_data"] = [visitor_data]
+
         opts: dict = {
             "writesubtitles": True,
             "writeautomaticsub": True,
@@ -287,17 +307,22 @@ class TranscriptAgent:
             "quiet": True,
             "no_warnings": True,
             "noplaylist": True,
-            "extractor_args": {"youtube": {"skip": ["dash", "hls"]}},
+            "extractor_args": {"youtube": youtube_extras},
             "http_headers": {
                 "User-Agent": (
                     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                     "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
                 ),
                 "Accept-Language": "en-US,en;q=0.9",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             },
         }
         if nocheckcertificate:
             opts["nocheckcertificate"] = True
+
+        proxy_url = (os.getenv("YOUTUBE_PROXY_URL") or "").strip()
+        if proxy_url:
+            opts["proxy"] = proxy_url
 
         cookie_path = self._cookie_file_path()
         if cookie_path:
@@ -361,12 +386,14 @@ class TranscriptAgent:
             resp = requests.get(
                 sub_url,
                 timeout=self._fetch_timeout_s,
+                proxies=self._transcript_proxies(),
                 headers={
                     "User-Agent": (
                         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                         "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
                     ),
                     "Accept-Language": "en-US,en;q=0.9",
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
                 },
             )
             resp.raise_for_status()
