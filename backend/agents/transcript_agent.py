@@ -162,8 +162,8 @@ class TranscriptAgent:
             if p:
                 add(p)
 
-        if not urls:
-            return [None]
+        # Always include a final direct attempt as last resort
+        urls.append(None)
         return urls
 
     def _first_configured_proxy_url(self) -> str | None:
@@ -172,6 +172,10 @@ class TranscriptAgent:
             if u:
                 return u
         return None
+
+    def _get_proxy_list(self) -> list[str | None]:
+        """Compatibility helper: ordered proxy list; None means no proxy."""
+        return self._youtube_transcript_proxy_url_candidates()
 
     def _transcript_proxies(self) -> dict[str, str] | None:
         """
@@ -259,7 +263,7 @@ class TranscriptAgent:
             List of transcript entries (dicts with `text`, `start`, `duration`).
         """
         cookies_path = self._cookie_file_path()
-        proxy_url_candidates = self._youtube_transcript_proxy_url_candidates()
+        proxy_url_candidates = self._get_proxy_list()
         tried_proxies = bool(any(u for u in proxy_url_candidates if u))
 
         def _run_with_timeout(fn):
@@ -272,10 +276,11 @@ class TranscriptAgent:
         for proxy_url in proxy_url_candidates:
             proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else None
             try:
+                print(f"Trying transcript fetch with proxy: {proxy_url or 'none'}")
                 return _run_with_timeout(
                     lambda p=proxies: YouTubeTranscriptApi.get_transcript(
                         video_id,
-                        ("en", "en-US", "en-GB"),
+                        ("en", "en-US", "en-GB", "a.en"),
                         proxies=p,
                         cookies=cookies_path,
                     )
@@ -320,30 +325,35 @@ class TranscriptAgent:
                 last_exc = exc
                 continue
 
-        ytdlp_steps = [
-            lambda: self._ytdlp_fetch_transcript_entries(video_id, nocheckcertificate=False),
-            lambda: self._ytdlp_fetch_transcript_entries(video_id, nocheckcertificate=True),
-        ]
-        for fn in ytdlp_steps:
-            try:
-                return _run_with_timeout(fn)
-            except concurrent.futures.TimeoutError as exc:
-                raise TranscriptFetchTimeoutError(
-                    f"Network timeout while fetching transcript (>{self._fetch_timeout_s:.0f}s)"
-                ) from exc
-            except VideoUnavailable as exc:
-                raise TranscriptUnavailableError(
-                    "Video is private, unavailable, or cannot be accessed"
-                ) from exc
-            except (TranscriptsDisabled, NoTranscriptFound) as exc:
-                last_exc = exc
-                continue
-            except (CouldNotRetrieveTranscript, ParseError, TranscriptUnavailableError) as exc:
-                last_exc = exc
-                continue
-            except Exception as exc:
-                last_exc = exc
-                continue
+        # yt-dlp fallback: try per-proxy too (use same proxy for metadata + VTT download)
+        for proxy_url in proxy_url_candidates:
+            ytdlp_steps = [
+                lambda u=proxy_url: self._ytdlp_fetch_transcript_entries(
+                    video_id, nocheckcertificate=False, proxy_url=u
+                ),
+                lambda u=proxy_url: self._ytdlp_fetch_transcript_entries(
+                    video_id, nocheckcertificate=True, proxy_url=u
+                ),
+            ]
+            for fn in ytdlp_steps:
+                try:
+                    return _run_with_timeout(fn)
+                except concurrent.futures.TimeoutError as exc:
+                    last_exc = exc
+                    continue
+                except VideoUnavailable as exc:
+                    raise TranscriptUnavailableError(
+                        "Video is private, unavailable, or cannot be accessed"
+                    ) from exc
+                except (TranscriptsDisabled, NoTranscriptFound) as exc:
+                    last_exc = exc
+                    continue
+                except (CouldNotRetrieveTranscript, ParseError, TranscriptUnavailableError) as exc:
+                    last_exc = exc
+                    continue
+                except Exception as exc:
+                    last_exc = exc
+                    continue
 
         if last_exc is not None:
             if isinstance(last_exc, (TranscriptsDisabled, NoTranscriptFound)):
@@ -351,7 +361,9 @@ class TranscriptAgent:
                     "No transcript available for this video (transcripts disabled or not found)"
                 ) from last_exc
             if tried_proxies:
-                raise TranscriptUnavailableError("All proxy attempts failed") from last_exc
+                raise TranscriptUnavailableError(
+                    f"All proxy attempts failed. Last error: {str(last_exc)}"
+                ) from last_exc
             raise TranscriptUnavailableError(
                 "Unable to retrieve transcript for this video"
             ) from last_exc
@@ -446,7 +458,9 @@ class TranscriptAgent:
 
         return opts
 
-    def _ytdlp_fetch_transcript_entries(self, video_id: str, *, nocheckcertificate: bool) -> list[dict]:
+    def _ytdlp_fetch_transcript_entries(
+        self, video_id: str, *, nocheckcertificate: bool, proxy_url: str | None = None
+    ) -> list[dict]:
         """
         Fetch captions via yt-dlp metadata + HTTP download of VTT URL.
 
@@ -455,6 +469,8 @@ class TranscriptAgent:
         """
         video_url = f"https://www.youtube.com/watch?v={video_id}"
         ydl_opts = self._build_ytdlp_opts(nocheckcertificate=nocheckcertificate)
+        if proxy_url:
+            ydl_opts["proxy"] = proxy_url
 
         try:
             with YoutubeDL(ydl_opts) as ydl:
@@ -502,7 +518,7 @@ class TranscriptAgent:
             resp = requests.get(
                 sub_url,
                 timeout=self._fetch_timeout_s,
-                proxies=self._transcript_proxies(),
+                proxies={"http": proxy_url, "https": proxy_url} if proxy_url else self._transcript_proxies(),
                 headers={
                     "User-Agent": (
                         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -536,6 +552,10 @@ class TranscriptAgent:
             )
 
         return entries
+
+    def _parse_vtt(self, vtt_content: str) -> list[dict]:
+        """Compatibility helper for VTT parsing used by some deployment recipes."""
+        return self._parse_vtt_to_entries(vtt_content)
 
     def _parse_vtt_to_entries(self, vtt_text: str) -> list[dict]:
         """
