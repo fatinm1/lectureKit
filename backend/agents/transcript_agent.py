@@ -121,18 +121,70 @@ class TranscriptAgent:
                 return path
         return None
 
+    def _youtube_transcript_proxy_url_candidates(self) -> list[str | None]:
+        """
+        Ordered proxy URLs for youtube-transcript-api rotation (Webshare, etc.).
+
+        Sources (deduped, first wins): YOUTUBE_PROXY_URL, YOUTUBE_PROXY_URL_LIST
+        (comma-separated or JSON array), YOUTUBE_PROXY_URL_1 … YOUTUBE_PROXY_URL_10.
+        Empty configuration → [None] (direct connection once).
+        """
+        urls: list[str] = []
+        seen: set[str] = set()
+
+        def add(raw: str) -> None:
+            u = raw.strip()
+            if not u or u in seen:
+                return
+            seen.add(u)
+            urls.append(u)
+
+        single = (os.getenv("YOUTUBE_PROXY_URL") or "").strip()
+        if single:
+            add(single)
+
+        raw_list = (os.getenv("YOUTUBE_PROXY_URL_LIST") or "").strip()
+        if raw_list:
+            try:
+                parsed = json.loads(raw_list)
+                if isinstance(parsed, list):
+                    for item in parsed:
+                        if isinstance(item, str):
+                            add(item)
+                elif isinstance(parsed, str):
+                    add(parsed)
+            except json.JSONDecodeError:
+                for part in raw_list.split(","):
+                    add(part)
+
+        for i in range(1, 11):
+            p = (os.getenv(f"YOUTUBE_PROXY_URL_{i}") or "").strip()
+            if p:
+                add(p)
+
+        if not urls:
+            return [None]
+        return urls
+
+    def _first_configured_proxy_url(self) -> str | None:
+        """First non-empty proxy URL for consumers that only support a single proxy (e.g. yt-dlp)."""
+        for u in self._youtube_transcript_proxy_url_candidates():
+            if u:
+                return u
+        return None
+
     def _transcript_proxies(self) -> dict[str, str] | None:
         """
         Optional HTTP(S) proxies for transcript fetches (youtube-transcript-api, yt-dlp, caption HTTP GET).
 
         Priority:
-        1. YOUTUBE_PROXY_URL — single URL (e.g. Webshare) used for both http and https
+        1. First URL from _youtube_transcript_proxy_url_candidates() (YOUTUBE_PROXY_URL + list + numbered vars)
         2. YOUTUBE_TRANSCRIPT_PROXIES — JSON {\"http\":\"...\",\"https\":\"...\"} or one URL string
         3. HTTPS_PROXY / HTTP_PROXY
         """
-        single = (os.getenv("YOUTUBE_PROXY_URL") or "").strip()
-        if single:
-            return {"http": single, "https": single}
+        first = self._first_configured_proxy_url()
+        if first:
+            return {"http": first, "https": first}
 
         raw = (os.getenv("YOUTUBE_TRANSCRIPT_PROXIES") or "").strip()
         if raw:
@@ -190,13 +242,15 @@ class TranscriptAgent:
 
     def _fetch_transcript_entries(self, video_id: str) -> list[dict]:
         """
-        Retrieve transcript entries using several strategies (datacenter-friendly).
+        Retrieve transcript entries (datacenter / bot mitigation).
 
         Order:
-        1. youtube-transcript-api get_transcript (optional proxies + cookies file)
-        2. youtube-transcript-api list_transcripts + fetch (different code path)
-        3. yt-dlp subtitle metadata + VTT download (browser-like headers, optional cookies file)
-        4. Same as (3) with nocheckcertificate for strict TLS middleboxes
+        1. youtube-transcript-api get_transcript — try each configured proxy in sequence
+           (YOUTUBE_PROXY_URL, YOUTUBE_PROXY_URL_LIST, YOUTUBE_PROXY_URL_1…); optional cookies file.
+           With no proxy env vars, tries direct once ([None]).
+        2. Same proxy rotation with list_transcripts + fetch.
+        3. yt-dlp caption fallback (first configured proxy + cookies) with nocheckcertificate variant.
+        4. If proxies were configured and everything failed: raise ``All proxy attempts failed``.
 
         Args:
             video_id: YouTube video ID.
@@ -204,23 +258,73 @@ class TranscriptAgent:
         Returns:
             List of transcript entries (dicts with `text`, `start`, `duration`).
         """
-        proxies = self._transcript_proxies()
         cookies_path = self._cookie_file_path()
+        proxy_url_candidates = self._youtube_transcript_proxy_url_candidates()
+        tried_proxies = bool(any(u for u in proxy_url_candidates if u))
 
         def _run_with_timeout(fn):
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
                 future = executor.submit(fn)
                 return future.result(timeout=self._fetch_timeout_s)
 
-        steps = [
-            lambda: self._youtube_api_get_transcript(video_id, proxies, cookies_path),
-            lambda: self._youtube_api_list_transcripts_fetch(video_id, proxies, cookies_path),
+        last_exc: BaseException | None = None
+
+        for proxy_url in proxy_url_candidates:
+            proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else None
+            try:
+                return _run_with_timeout(
+                    lambda p=proxies: YouTubeTranscriptApi.get_transcript(
+                        video_id,
+                        ("en", "en-US", "en-GB"),
+                        proxies=p,
+                        cookies=cookies_path,
+                    )
+                )
+            except concurrent.futures.TimeoutError as exc:
+                last_exc = exc
+                continue
+            except VideoUnavailable as exc:
+                raise TranscriptUnavailableError(
+                    "Video is private, unavailable, or cannot be accessed"
+                ) from exc
+            except (TranscriptsDisabled, NoTranscriptFound, CouldNotRetrieveTranscript, ParseError) as exc:
+                last_exc = exc
+                continue
+            except TranscriptUnavailableError as exc:
+                last_exc = exc
+                continue
+            except Exception as exc:
+                last_exc = exc
+                continue
+
+        for proxy_url in proxy_url_candidates:
+            proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else None
+            try:
+                return _run_with_timeout(
+                    lambda p=proxies: self._youtube_api_list_transcripts_fetch(video_id, p, cookies_path)
+                )
+            except concurrent.futures.TimeoutError as exc:
+                last_exc = exc
+                continue
+            except VideoUnavailable as exc:
+                raise TranscriptUnavailableError(
+                    "Video is private, unavailable, or cannot be accessed"
+                ) from exc
+            except (TranscriptsDisabled, NoTranscriptFound, CouldNotRetrieveTranscript, ParseError) as exc:
+                last_exc = exc
+                continue
+            except TranscriptUnavailableError as exc:
+                last_exc = exc
+                continue
+            except Exception as exc:
+                last_exc = exc
+                continue
+
+        ytdlp_steps = [
             lambda: self._ytdlp_fetch_transcript_entries(video_id, nocheckcertificate=False),
             lambda: self._ytdlp_fetch_transcript_entries(video_id, nocheckcertificate=True),
         ]
-
-        last_exc: BaseException | None = None
-        for fn in steps:
+        for fn in ytdlp_steps:
             try:
                 return _run_with_timeout(fn)
             except concurrent.futures.TimeoutError as exc:
@@ -246,6 +350,8 @@ class TranscriptAgent:
                 raise TranscriptUnavailableError(
                     "No transcript available for this video (transcripts disabled or not found)"
                 ) from last_exc
+            if tried_proxies:
+                raise TranscriptUnavailableError("All proxy attempts failed") from last_exc
             raise TranscriptUnavailableError(
                 "Unable to retrieve transcript for this video"
             ) from last_exc
@@ -329,7 +435,7 @@ class TranscriptAgent:
         if nocheckcertificate:
             opts["nocheckcertificate"] = True
 
-        proxy_url = (os.getenv("YOUTUBE_PROXY_URL") or "").strip()
+        proxy_url = self._first_configured_proxy_url()
         if proxy_url:
             opts["proxy"] = proxy_url
 
