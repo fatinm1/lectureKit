@@ -16,7 +16,7 @@ import logging
 import os
 import time
 import traceback
-from typing import List, Optional
+from typing import Optional
 from urllib.parse import urlparse
 
 from dotenv import load_dotenv
@@ -66,22 +66,6 @@ if _cookies_b64:
 logger = logging.getLogger("lecturekit")
 
 
-def _allowed_origins() -> List[str]:
-    """
-    Build the CORS allowlist for browser clients.
-
-    Returns:
-        List of origins permitted to call this API with credentials disabled.
-
-    Steps:
-        1. Start with local Next.js dev server defaults.
-        2. Allow override via CORS_ORIGINS (comma-separated) for staging/production.
-    """
-    raw = os.getenv("CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000")
-    # Step: Split and strip whitespace so `.env` formatting is forgiving.
-    return [origin.strip() for origin in raw.split(",") if origin.strip()]
-
-
 app = FastAPI(
     title="Cloudforce Frontier API",
     version="0.1.0",
@@ -96,13 +80,38 @@ def _request_validation_error_handler(_request, _exc: RequestValidationError) ->
         content={"detail": "Invalid request: 'youtube_url' must be a valid URL."},
     )
 
-# Step: Enable cross-origin requests from the Next.js app during local dev and deploy previews.
+# Parse CORS origins from environment variable
+cors_origins_raw = os.getenv("CORS_ORIGINS", "http://localhost:3000")
+
+# Build list of allowed origins - strip whitespace and trailing slashes
+allowed_origins: list[str] = []
+for origin in cors_origins_raw.split(","):
+    origin = origin.strip().rstrip("/")
+    if origin:
+        allowed_origins.append(origin)
+        # Also allow with trailing slash just in case
+        allowed_origins.append(origin + "/")
+
+# Always include localhost for development
+dev_origins = [
+    "http://localhost:3000",
+    "http://localhost:3001",
+    "http://localhost:3002",
+    "http://127.0.0.1:3000",
+]
+for dev in dev_origins:
+    if dev not in allowed_origins:
+        allowed_origins.append(dev)
+
+print(f"CORS allowed origins: {allowed_origins}")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=_allowed_origins(),
+    allow_origins=allowed_origins,
     allow_credentials=False,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
 
 # Step: Create the Agent 1 instance once; it is stateless and safe to reuse per request.
