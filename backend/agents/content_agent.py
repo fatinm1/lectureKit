@@ -128,6 +128,8 @@ class ContentAgent:
         return (
             "You are a study-material generation engine.\n"
             "You will be given a lecture transcript with timestamps.\n\n"
+            "IMPORTANT: Respond entirely in English regardless of the language of the transcript. "
+            "All outline titles, descriptions, summaries, and flashcard questions and answers must be in English.\n\n"
             "CRITICAL OUTPUT RULES:\n"
             "- Respond with ONLY valid JSON.\n"
             "- No markdown, no backticks, no explanations, no preamble.\n\n"
@@ -235,18 +237,18 @@ class ContentAgent:
         Claude sometimes wraps JSON in markdown fences, adds preamble text,
         or includes trailing explanation. This handles all those cases.
         """
-        raw = text or ""
-
-        # Strategy 1: Aggressive markdown fence removal then parse
-        cleaned = re.sub(r"```[a-zA-Z]*\n?", "", raw)
+        # Step 1: aggressive markdown fence removal
+        cleaned = re.sub(r"```[a-zA-Z]*\r?\n?", "", text or "")
         cleaned = cleaned.replace("```", "")
-        cleaned = cleaned.strip().strip("` \n\t")
+        cleaned = cleaned.strip()
+
+        # Step 2: try to parse directly
         try:
             return json.loads(cleaned)
         except json.JSONDecodeError:
             pass
 
-        # Strategy 2: Find the outermost JSON object by locating first { and last }
+        # Step 3: find outermost JSON object
         start = cleaned.find("{")
         end = cleaned.rfind("}")
         if start != -1 and end != -1 and end > start:
@@ -255,9 +257,10 @@ class ContentAgent:
             except json.JSONDecodeError:
                 pass
 
-        # Strategy 3: Try original text (no cleaning) then parse
+        # Step 4: try original text
+        raw = (text or "").strip()
         try:
-            return json.loads(raw.strip())
+            return json.loads(raw)
         except json.JSONDecodeError:
             pass
 
@@ -270,8 +273,7 @@ class ContentAgent:
                 pass
 
         raise ContentAgentError(
-            "Could not parse JSON after all strategies. "
-            f"First 300 chars of response: {raw[:300]}"
+            f"Could not parse JSON after all strategies. First 200 chars: {raw[:200]}"
         )
 
     def _build_repair_prompt(self, *, transcript: str, bad_output: str) -> str:
