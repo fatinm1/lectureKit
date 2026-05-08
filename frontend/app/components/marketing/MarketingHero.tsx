@@ -31,11 +31,11 @@ export function MarketingHero(): JSX.Element {
       {/* Decorative stack — pointer-events none so anchors remain clickable */}
       <div className="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden>
         {/*
-          Radial glow — concentrated purple orb (blur on wrapper keeps the core brighter).
+          Radial glow — concentrated blue orb (blur on wrapper keeps the core brighter).
         */}
         <div className="absolute bottom-[-12%] left-1/2 z-0 -translate-x-1/2 blur-3xl">
           <div
-            className="h-[500px] w-[500px] rounded-full bg-purple-500 opacity-40 motion-safe:animate-hero-glow-float motion-reduce:animate-none"
+            className="h-[500px] w-[500px] rounded-full bg-blue-700 opacity-40 motion-safe:animate-hero-glow-float motion-reduce:animate-none"
             aria-hidden
           />
         </div>
