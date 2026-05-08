@@ -27,6 +27,7 @@ from fastapi.responses import JSONResponse
 
 from agents.content_agent import ContentAgent, ContentAgentError
 from agents.faculty_agent import FacultyAgent, FacultyAgentError
+from agents.provost_agent import ProvostAgent, ProvostAgentError
 from agents.search_agent import SearchAgent, SearchAgentError
 from agents.transcript_agent import (
     TranscriptAgent,
@@ -124,6 +125,7 @@ search_agent = SearchAgent()
 _content_agent: Optional[ContentAgent] = None
 _translate_agent: Optional[TranslateAgent] = None
 _faculty_agent: Optional[FacultyAgent] = None
+_provost_agent: Optional[ProvostAgent] = None
 
 
 def get_content_agent() -> ContentAgent:
@@ -148,6 +150,14 @@ def get_faculty_agent() -> FacultyAgent:
     if _faculty_agent is None:
         _faculty_agent = FacultyAgent()
     return _faculty_agent
+
+
+def get_provost_agent() -> ProvostAgent:
+    """Return a singleton ProvostAgent; raises ProvostAgentError if API key is missing."""
+    global _provost_agent
+    if _provost_agent is None:
+        _provost_agent = ProvostAgent()
+    return _provost_agent
 
 
 @app.get("/health")
@@ -251,6 +261,71 @@ async def faculty_report(request: Request) -> dict:
         raise HTTPException(status_code=500, detail="Unexpected server error") from exc
 
     return {"status": "success", "video_id": video_id, "youtube_url": youtube_url, "report": report}
+
+
+@app.options("/provost")
+async def provost_options(request: Request) -> JSONResponse:
+    return JSONResponse(
+        content={},
+        headers={
+            "Access-Control-Allow-Origin": request.headers.get("origin", "*"),
+            "Access-Control-Allow-Methods": "POST, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type, Authorization",
+            "Access-Control-Max-Age": "86400",
+        },
+    )
+
+
+@app.post("/provost")
+async def provost_report(request: Request) -> dict:
+    body = await request.json()
+    youtube_urls = body.get("youtube_urls", []) if isinstance(body, dict) else []
+    learning_objectives = (body.get("learning_objectives") or "").strip() if isinstance(body, dict) else ""
+
+    if not youtube_urls:
+        raise HTTPException(status_code=422, detail="youtube_urls array is required")
+    if len(youtube_urls) > 10:
+        raise HTTPException(status_code=422, detail="Maximum 10 URLs allowed")
+    if not learning_objectives:
+        raise HTTPException(status_code=422, detail="learning_objectives is required")
+
+    lectures: list[dict] = []
+    failed_urls: list[dict] = []
+
+    for raw_url in youtube_urls:
+        url = (str(raw_url) or "").strip()
+        if not url:
+            continue
+        try:
+            video_id = extract_youtube_video_id(url)
+            _, chunks = transcript_agent.process(url)
+            lectures.append(
+                {
+                    "video_id": video_id,
+                    "youtube_url": url,
+                    "chunks": [c.model_dump() for c in chunks],
+                }
+            )
+        except Exception as exc:
+            failed_urls.append({"url": url, "error": str(exc)})
+
+    if not lectures:
+        raise HTTPException(
+            status_code=404, detail="Could not retrieve transcripts for any provided URLs"
+        )
+
+    try:
+        curriculum_map = get_provost_agent().generate_curriculum_map(lectures, learning_objectives)
+    except ProvostAgentError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    return {
+        "status": "success",
+        "lecture_count": len(lectures),
+        "failed_urls": failed_urls,
+        "video_ids": [l["video_id"] for l in lectures],
+        "curriculum_map": curriculum_map,
+    }
 
 
 @app.post("/process", response_model=ProcessYouTubeResponse)

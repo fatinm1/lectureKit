@@ -76,3 +76,44 @@ export interface FacultySession {
   report: FacultyReport;
 }
 
+export interface ObjectiveAnalysis {
+  objective: string;
+  coverage_status: "covered" | "partial" | "missing";
+  coverage_score: number;
+  evidence: string;
+  lectures_covering: number[];
+  gaps: string;
+}
+
+export interface CriticalGap {
+  gap: string;
+  impact: string;
+  recommendation: string;
+}
+
+export interface ProvostRecommendation {
+  priority: number;
+  recommendation: string;
+  rationale: string;
+}
+
+export interface CurriculumMap {
+  overall_coverage_score: number;
+  executive_summary: string;
+  objectives_analysis: ObjectiveAnalysis[];
+  curriculum_strengths: string[];
+  critical_gaps: CriticalGap[];
+  coverage_distribution: {
+    fully_covered: number;
+    partially_covered: number;
+    not_covered: number;
+  };
+  recommendations: ProvostRecommendation[];
+}
+
+export interface ProvostSession {
+  lecture_count: number;
+  video_ids: string[];
+  curriculum_map: CurriculumMap;
+}
+

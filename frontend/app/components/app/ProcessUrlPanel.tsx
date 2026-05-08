@@ -11,7 +11,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 
-import type { FacultySession, LectureSession } from "../../../types/lecture";
+import type { FacultySession, LectureSession, ProvostSession } from "../../../types/lecture";
 
 const FEATURES = ["Instant Summaries", "Smart Flashcards", "Semantic Search"] as const;
 
@@ -31,7 +31,9 @@ function getApiBaseUrl(): string {
 
 export function ProcessUrlPanel(): JSX.Element {
   const [url, setUrl] = useState("");
-  const [mode, setMode] = useState<"student" | "faculty">("student");
+  const [mode, setMode] = useState<"student" | "faculty" | "provost">("student");
+  const [provostUrls, setProvostUrls] = useState("");
+  const [learningObjectives, setLearningObjectives] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [uiMode, setUiMode] = useState<"form" | "loading">("form");
@@ -46,7 +48,13 @@ export function ProcessUrlPanel(): JSX.Element {
   const router = useRouter();
 
   const steps = useMemo(() => {
-    return mode === "faculty"
+    return mode === "provost"
+      ? ([
+          { id: 1 as const, label: "Fetching transcripts" },
+          { id: 2 as const, label: "Analyzing curriculum coverage" },
+          { id: 3 as const, label: "Generating curriculum map" },
+        ] as const)
+      : mode === "faculty"
       ? ([
           { id: 1 as const, label: "Fetching transcript" },
           { id: 2 as const, label: "Analyzing lecture quality" },
@@ -141,6 +149,22 @@ export function ProcessUrlPanel(): JSX.Element {
     window.localStorage.setItem("lecturekit_faculty_session", JSON.stringify(session));
   }
 
+  function persistProvostSession(payload: unknown): void {
+    if (!payload || typeof payload !== "object") {
+      throw new Error("Unexpected response payload.");
+    }
+    const obj = payload as Record<string, unknown>;
+    const session: ProvostSession = {
+      lecture_count: Number(obj.lecture_count ?? 0),
+      video_ids: (obj.video_ids as string[]) ?? [],
+      curriculum_map: (obj.curriculum_map as ProvostSession["curriculum_map"]) ?? ({} as ProvostSession["curriculum_map"]),
+    };
+    if (!session.lecture_count || !session.curriculum_map) {
+      throw new Error("Missing required fields in response.");
+    }
+    window.localStorage.setItem("lecturekit_provost_session", JSON.stringify(session));
+  }
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     /**
      * Submit the lecture URL for orchestration (stub in Part 1).
@@ -159,23 +183,58 @@ export function ProcessUrlPanel(): JSX.Element {
     try {
       // Step: Provide a friendly client-side check so users get immediate feedback.
       try {
-        // eslint-disable-next-line no-new
-        new URL(url);
+        if (mode === "provost") {
+          // Validate each URL in the textarea
+          const urls = provostUrls
+            .split("\n")
+            .map((u) => u.trim())
+            .filter(Boolean);
+          if (urls.length === 0) {
+            resetToForm("Please paste at least one YouTube URL (one per line).");
+            return;
+          }
+          if (urls.length > 10) {
+            resetToForm("Maximum 10 URLs allowed.");
+            return;
+          }
+          for (const u of urls) {
+            // eslint-disable-next-line no-new
+            new URL(u);
+          }
+          if (!learningObjectives.trim()) {
+            resetToForm("Please paste your learning objectives.");
+            return;
+          }
+        } else {
+          // eslint-disable-next-line no-new
+          new URL(url);
+        }
       } catch {
         resetToForm("Please paste a valid YouTube URL (e.g. https://www.youtube.com/watch?v=...).");
         return;
       }
 
-      const endpoint = `${getApiBaseUrl()}${mode === "faculty" ? "/faculty" : "/process"}`;
+      const path = mode === "faculty" ? "/faculty" : mode === "provost" ? "/provost" : "/process";
+      const endpoint = `${getApiBaseUrl()}${path}`;
+      const body =
+        mode === "provost"
+          ? {
+              youtube_urls: provostUrls
+                .split("\n")
+                .map((u) => u.trim())
+                .filter(Boolean),
+              learning_objectives: learningObjectives.trim(),
+            }
+          : { youtube_url: url };
       const response = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ youtube_url: url }),
+        body: JSON.stringify(body),
       });
 
       const payload = await response.json().catch(() => null);
 
-      console.log(`[LectureKit] POST ${mode === "faculty" ? "/faculty" : "/process"} response`, {
+      console.log(`[LectureKit] POST ${path} response`, {
         ok: response.ok,
         status: response.status,
         body: payload,
@@ -207,12 +266,14 @@ export function ProcessUrlPanel(): JSX.Element {
       // Step: Store the full session, then navigate.
       if (mode === "faculty") {
         persistFacultySession(payload);
+      } else if (mode === "provost") {
+        persistProvostSession(payload);
       } else {
         persistStudentSession(payload);
       }
 
       window.setTimeout(() => {
-        router.push(mode === "faculty" ? "/report" : "/study");
+        router.push(mode === "faculty" ? "/report" : mode === "provost" ? "/curriculum" : "/study");
       }, 500);
     } catch (error) {
       console.error("[LectureKit] Failed to reach backend", error);
@@ -274,12 +335,18 @@ export function ProcessUrlPanel(): JSX.Element {
           Workspace
         </p>
         <h1 id="app-workspace-title" className="mt-sm text-hero text-ink">
-          {mode === "faculty" ? "Faculty Audit Report" : "Generate your study kit"}
+          {mode === "provost"
+            ? "Curriculum Coverage Map"
+            : mode === "faculty"
+              ? "Faculty Audit Report"
+              : "Generate your study kit"}
         </h1>
         <p className="mt-md text-body text-marketing-muted">
-          {mode === "faculty"
-            ? "Paste a public YouTube lecture link. LectureKit will analyze your lecture across pedagogical quality, accessibility, equity, and clarity — and generate a private prioritized fix list with timestamped suggested rewrites."
-            : "Paste a public YouTube lecture link. LectureKit will orchestrate transcript extraction, analysis, and search indexing — results surface here as soon as the pipeline ships."}
+          {mode === "provost"
+            ? "Paste up to 10 YouTube lecture URLs from a single course and your learning objectives. LectureKit will map what was actually taught against what the course promises to deliver."
+            : mode === "faculty"
+              ? "Paste a public YouTube lecture link. LectureKit will analyze your lecture across pedagogical quality, accessibility, equity, and clarity — and generate a private prioritized fix list with timestamped suggested rewrites."
+              : "Paste a public YouTube lecture link. LectureKit will orchestrate transcript extraction, analysis, and search indexing — results surface here as soon as the pipeline ships."}
         </p>
       </div>
 
@@ -311,35 +378,85 @@ export function ProcessUrlPanel(): JSX.Element {
             >
               Faculty
             </button>
-          </div>
-          <div className="flex flex-col items-stretch gap-sm sm:flex-row sm:items-center sm:justify-center">
-            <label htmlFor="youtube-url-app" className="sr-only">
-              YouTube lecture URL
-            </label>
-            <input
-              id="youtube-url-app"
-              name="youtube-url-app"
-              type="text"
-              required
-              placeholder="https://www.youtube.com/watch?v=..."
-              value={url}
-              onChange={(e) => setUrl(e.target.value)}
-              inputMode="url"
-              autoComplete="off"
-              className="min-h-[44px] w-full flex-1 rounded-linear border border-marketing-divider bg-surface-1 px-sm py-xs text-body text-ink outline-none transition duration-interaction ease-out placeholder:text-ink-tertiary focus:border-primary-focus focus:shadow-focus-glow sm:max-w-xl"
-            />
             <button
-              type="submit"
-              disabled={isSubmitting}
-              className="min-h-[44px] rounded-linear bg-primary px-[14px] py-[8px] text-button font-medium text-onprimary transition duration-interaction ease-out hover:bg-primary-hover active:bg-primary-focus disabled:cursor-not-allowed disabled:opacity-60"
+              type="button"
+              onClick={() => setMode("provost")}
+              className={`rounded-md px-4 py-2 text-sm font-medium transition-all duration-200 ${
+                mode === "provost"
+                  ? "bg-[#5e6ad2] text-white"
+                  : "border border-[#2a2a2a] text-[#a1a1aa] hover:border-[#5e6ad2] hover:text-white"
+              }`}
             >
-              {isSubmitting
-                ? "Sending…"
-                : mode === "faculty"
-                  ? "Generate Audit Report"
-                  : "Generate Study Kit"}
+              Provost
             </button>
           </div>
+          {mode === "provost" ? (
+            <div className="flex w-full flex-col gap-md text-left">
+              <label htmlFor="provost-urls" className="text-caption font-medium uppercase tracking-[0.22em] text-marketing-muted">
+                Lecture URLs (up to 10, one per line)
+              </label>
+              <textarea
+                id="provost-urls"
+                value={provostUrls}
+                onChange={(e) => setProvostUrls(e.target.value)}
+                rows={6}
+                placeholder={"https://www.youtube.com/watch?v=...\nhttps://www.youtube.com/watch?v=..."}
+                className="w-full rounded-linear border border-marketing-divider bg-surface-1 px-sm py-xs text-body text-ink outline-none transition duration-interaction ease-out placeholder:text-ink-tertiary focus:border-primary-focus focus:shadow-focus-glow"
+              />
+              <label
+                htmlFor="provost-objectives"
+                className="text-caption font-medium uppercase tracking-[0.22em] text-marketing-muted"
+              >
+                Learning objectives
+              </label>
+              <textarea
+                id="provost-objectives"
+                value={learningObjectives}
+                onChange={(e) => setLearningObjectives(e.target.value)}
+                rows={5}
+                placeholder={"1) ...\n2) ...\n3) ..."}
+                className="w-full rounded-linear border border-marketing-divider bg-surface-1 px-sm py-xs text-body text-ink outline-none transition duration-interaction ease-out placeholder:text-ink-tertiary focus:border-primary-focus focus:shadow-focus-glow"
+              />
+              <div className="flex justify-center">
+                <button
+                  type="submit"
+                  disabled={isSubmitting}
+                  className="min-h-[44px] rounded-linear bg-primary px-[14px] py-[8px] text-button font-medium text-onprimary transition duration-interaction ease-out hover:bg-primary-hover active:bg-primary-focus disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {isSubmitting ? "Sending…" : "Generate Curriculum Map"}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="flex flex-col items-stretch gap-sm sm:flex-row sm:items-center sm:justify-center">
+              <label htmlFor="youtube-url-app" className="sr-only">
+                YouTube lecture URL
+              </label>
+              <input
+                id="youtube-url-app"
+                name="youtube-url-app"
+                type="text"
+                required
+                placeholder="https://www.youtube.com/watch?v=..."
+                value={url}
+                onChange={(e) => setUrl(e.target.value)}
+                inputMode="url"
+                autoComplete="off"
+                className="min-h-[44px] w-full flex-1 rounded-linear border border-marketing-divider bg-surface-1 px-sm py-xs text-body text-ink outline-none transition duration-interaction ease-out placeholder:text-ink-tertiary focus:border-primary-focus focus:shadow-focus-glow sm:max-w-xl"
+              />
+              <button
+                type="submit"
+                disabled={isSubmitting}
+                className="min-h-[44px] rounded-linear bg-primary px-[14px] py-[8px] text-button font-medium text-onprimary transition duration-interaction ease-out hover:bg-primary-hover active:bg-primary-focus disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {isSubmitting
+                  ? "Sending…"
+                  : mode === "faculty"
+                    ? "Generate Audit Report"
+                    : "Generate Study Kit"}
+              </button>
+            </div>
+          )}
 
           <div className="flex flex-wrap justify-center gap-x-lg gap-y-xs text-secondary text-marketing-muted">
             {FEATURES.map((label) => (
