@@ -26,6 +26,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from agents.content_agent import ContentAgent, ContentAgentError
+from agents.faculty_agent import FacultyAgent, FacultyAgentError
 from agents.search_agent import SearchAgent, SearchAgentError
 from agents.transcript_agent import (
     TranscriptAgent,
@@ -122,6 +123,7 @@ search_agent = SearchAgent()
 # Step: Lazy-init Claude-backed agents so Railway healthchecks pass before ANTHROPIC_API_KEY is set.
 _content_agent: Optional[ContentAgent] = None
 _translate_agent: Optional[TranslateAgent] = None
+_faculty_agent: Optional[FacultyAgent] = None
 
 
 def get_content_agent() -> ContentAgent:
@@ -138,6 +140,14 @@ def get_translate_agent() -> TranslateAgent:
     if _translate_agent is None:
         _translate_agent = TranslateAgent()
     return _translate_agent
+
+
+def get_faculty_agent() -> FacultyAgent:
+    """Return a singleton FacultyAgent; raises FacultyAgentError if API key is missing."""
+    global _faculty_agent
+    if _faculty_agent is None:
+        _faculty_agent = FacultyAgent()
+    return _faculty_agent
 
 
 @app.get("/health")
@@ -197,6 +207,50 @@ async def translate_options(request: Request) -> JSONResponse:
             "Access-Control-Max-Age": "86400",
         },
     )
+
+
+@app.options("/faculty")
+async def faculty_options(request: Request) -> JSONResponse:
+    return JSONResponse(
+        content={},
+        headers={
+            "Access-Control-Allow-Origin": request.headers.get("origin", "*"),
+            "Access-Control-Allow-Methods": "POST, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type, Authorization",
+            "Access-Control-Max-Age": "86400",
+        },
+    )
+
+
+@app.post("/faculty")
+async def faculty_report(request: Request) -> dict:
+    body = await request.json()
+    youtube_url = (body.get("youtube_url") or "").strip() if isinstance(body, dict) else ""
+    if not youtube_url:
+        raise HTTPException(status_code=422, detail="youtube_url is required")
+
+    try:
+        video_id = extract_youtube_video_id(youtube_url)
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=f"Invalid YouTube URL: {str(exc)}") from exc
+
+    try:
+        _, chunks = transcript_agent.process(youtube_url)
+    except TranscriptUnavailableError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except TranscriptFetchTimeoutError as exc:
+        raise HTTPException(status_code=504, detail=str(exc)) from exc
+    except TranscriptAgentError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    try:
+        report = get_faculty_agent().generate_report(chunks, video_id)
+    except FacultyAgentError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail="Unexpected server error") from exc
+
+    return {"status": "success", "video_id": video_id, "youtube_url": youtube_url, "report": report}
 
 
 @app.post("/process", response_model=ProcessYouTubeResponse)

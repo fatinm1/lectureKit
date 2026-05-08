@@ -11,7 +11,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 
-import type { LectureSession } from "../../../types/lecture";
+import type { FacultySession, LectureSession } from "../../../types/lecture";
 
 const FEATURES = ["Instant Summaries", "Smart Flashcards", "Semantic Search"] as const;
 
@@ -31,6 +31,7 @@ function getApiBaseUrl(): string {
 
 export function ProcessUrlPanel(): JSX.Element {
   const [url, setUrl] = useState("");
+  const [mode, setMode] = useState<"student" | "faculty">("student");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [uiMode, setUiMode] = useState<"form" | "loading">("form");
@@ -44,15 +45,19 @@ export function ProcessUrlPanel(): JSX.Element {
 
   const router = useRouter();
 
-  const steps = useMemo(
-    () =>
-      [
-        { id: 1 as const, label: "Fetching transcript" },
-        { id: 2 as const, label: "Analyzing content" },
-        { id: 3 as const, label: "Building study kit" },
-      ] as const,
-    []
-  );
+  const steps = useMemo(() => {
+    return mode === "faculty"
+      ? ([
+          { id: 1 as const, label: "Fetching transcript" },
+          { id: 2 as const, label: "Analyzing lecture quality" },
+          { id: 3 as const, label: "Generating audit report" },
+        ] as const)
+      : ([
+          { id: 1 as const, label: "Fetching transcript" },
+          { id: 2 as const, label: "Analyzing content" },
+          { id: 3 as const, label: "Building study kit" },
+        ] as const);
+  }, [mode]);
 
   function clearTimers(): void {
     for (const t of timersRef.current) {
@@ -94,7 +99,7 @@ export function ProcessUrlPanel(): JSX.Element {
     setStatusMessage(message ?? null);
   }
 
-  function persistSession(payload: unknown): void {
+  function persistStudentSession(payload: unknown): void {
     if (!payload || typeof payload !== "object") {
       throw new Error("Unexpected response payload.");
     }
@@ -118,6 +123,22 @@ export function ProcessUrlPanel(): JSX.Element {
     }
 
     window.localStorage.setItem("lecturekit_session", JSON.stringify(session));
+  }
+
+  function persistFacultySession(payload: unknown): void {
+    if (!payload || typeof payload !== "object") {
+      throw new Error("Unexpected response payload.");
+    }
+    const obj = payload as Record<string, unknown>;
+    const session: FacultySession = {
+      video_id: String(obj.video_id ?? ""),
+      youtube_url: String(obj.youtube_url ?? url),
+      report: (obj.report as FacultySession["report"]) ?? ({} as FacultySession["report"]),
+    };
+    if (!session.video_id || !session.youtube_url || !session.report) {
+      throw new Error("Missing required fields in response.");
+    }
+    window.localStorage.setItem("lecturekit_faculty_session", JSON.stringify(session));
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -145,7 +166,7 @@ export function ProcessUrlPanel(): JSX.Element {
         return;
       }
 
-      const endpoint = `${getApiBaseUrl()}/process`;
+      const endpoint = `${getApiBaseUrl()}${mode === "faculty" ? "/faculty" : "/process"}`;
       const response = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -154,7 +175,7 @@ export function ProcessUrlPanel(): JSX.Element {
 
       const payload = await response.json().catch(() => null);
 
-      console.log("[LectureKit] POST /process response", {
+      console.log(`[LectureKit] POST ${mode === "faculty" ? "/faculty" : "/process"} response`, {
         ok: response.ok,
         status: response.status,
         body: payload,
@@ -183,11 +204,15 @@ export function ProcessUrlPanel(): JSX.Element {
 
       setCompletedSteps({ 1: true, 2: true, 3: true });
 
-      // Step: Store the full session for `/study`, then navigate.
-      persistSession(payload);
+      // Step: Store the full session, then navigate.
+      if (mode === "faculty") {
+        persistFacultySession(payload);
+      } else {
+        persistStudentSession(payload);
+      }
 
       window.setTimeout(() => {
-        router.push("/study");
+        router.push(mode === "faculty" ? "/report" : "/study");
       }, 500);
     } catch (error) {
       console.error("[LectureKit] Failed to reach backend", error);
@@ -264,6 +289,30 @@ export function ProcessUrlPanel(): JSX.Element {
           onSubmit={handleSubmit}
           className="flex w-full max-w-xl flex-col gap-md transition-opacity duration-interaction ease-out"
         >
+          <div className="mb-6 flex gap-2">
+            <button
+              type="button"
+              onClick={() => setMode("student")}
+              className={`rounded-md px-4 py-2 text-sm font-medium transition-all duration-200 ${
+                mode === "student"
+                  ? "bg-[#5e6ad2] text-white"
+                  : "border border-[#2a2a2a] text-[#a1a1aa] hover:border-[#5e6ad2] hover:text-white"
+              }`}
+            >
+              Student
+            </button>
+            <button
+              type="button"
+              onClick={() => setMode("faculty")}
+              className={`rounded-md px-4 py-2 text-sm font-medium transition-all duration-200 ${
+                mode === "faculty"
+                  ? "bg-[#5e6ad2] text-white"
+                  : "border border-[#2a2a2a] text-[#a1a1aa] hover:border-[#5e6ad2] hover:text-white"
+              }`}
+            >
+              Faculty
+            </button>
+          </div>
           <div className="flex flex-col items-stretch gap-sm sm:flex-row sm:items-center">
             <label htmlFor="youtube-url-app" className="sr-only">
               YouTube lecture URL
@@ -285,7 +334,11 @@ export function ProcessUrlPanel(): JSX.Element {
               disabled={isSubmitting}
               className="min-h-[44px] rounded-linear bg-primary px-[14px] py-[8px] text-button font-medium text-onprimary transition duration-interaction ease-out hover:bg-primary-hover active:bg-primary-focus disabled:cursor-not-allowed disabled:opacity-60"
             >
-              {isSubmitting ? "Sending…" : "Generate study kit"}
+              {isSubmitting
+                ? "Sending…"
+                : mode === "faculty"
+                  ? "Generate audit report"
+                  : "Generate study kit"}
             </button>
           </div>
 

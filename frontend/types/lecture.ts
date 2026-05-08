@@ -33,3 +33,46 @@ export interface LectureSession {
   processed_at: string;
 }
 
+export interface FacultyIssue {
+  description: string;
+  timestamp: number;
+  suggested_rewrite: string;
+}
+
+export interface FacultyCategory {
+  score: number;
+  summary: string;
+  strengths: string[];
+  issues: FacultyIssue[];
+}
+
+export interface PrioritizedFix {
+  priority: number;
+  category: string;
+  title: string;
+  description: string;
+  timestamp: number;
+  suggested_rewrite: string;
+}
+
+export interface FacultyReport {
+  overall_score: number;
+  top_priority_fix: {
+    title: string;
+    description: string;
+    timestamp: number;
+    suggested_rewrite: string;
+  };
+  pedagogical: FacultyCategory;
+  accessibility: FacultyCategory;
+  equity: FacultyCategory;
+  clarity: FacultyCategory;
+  prioritized_fixes: PrioritizedFix[];
+}
+
+export interface FacultySession {
+  video_id: string;
+  youtube_url: string;
+  report: FacultyReport;
+}
+
