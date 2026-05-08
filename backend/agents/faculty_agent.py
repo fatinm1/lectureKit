@@ -29,7 +29,7 @@ class FacultyAgent:
 
         response = self.client.messages.create(
             model=self.model,
-            max_tokens=4000,
+            max_tokens=8000,
             messages=[{"role": "user", "content": prompt}],
         )
 
@@ -43,12 +43,23 @@ class FacultyAgent:
 
     def _format_transcript(self, chunks: Sequence[TranscriptChunk]) -> str:
         lines: list[str] = []
+        total_words = 0
+        max_words = 6000
+
         for chunk in chunks:
             start = float(getattr(chunk, "start", 0.0) or 0.0)
             minutes = int(start // 60)
             seconds = int(start % 60)
             timestamp = f"[{minutes:02d}:{seconds:02d}]"
-            lines.append(f"{timestamp} {chunk.text}")
+            text = (getattr(chunk, "text", "") or "").strip()
+            words = len(text.split())
+
+            if total_words + words > max_words:
+                break
+
+            lines.append(f"{timestamp} {text}")
+            total_words += words
+
         return "\n".join(lines)
 
     def _build_prompt(self, *, transcript_text: str, video_id: str) -> str:
