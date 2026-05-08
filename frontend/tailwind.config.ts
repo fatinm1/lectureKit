@@ -108,9 +108,9 @@ const config: Config = {
          */
         "hero-glow-float": {
           "0%, 100%": { transform: "translate(0%, 10%) translateZ(0)" },
-          "25%": { transform: "translate(15%, -5%) translateZ(0)" },
-          "50%": { transform: "translate(-15%, -10%) translateZ(0)" },
-          "75%": { transform: "translate(10%, 15%) translateZ(0)" },
+          "25%": { transform: "translate(25%, -15%) translateZ(0)" },
+          "50%": { transform: "translate(-25%, -5%) translateZ(0)" },
+          "75%": { transform: "translate(15%, 20%) translateZ(0)" },
         },
         /** Hero grid — vertical background-position drift (one 60px cell per loop, seamless repeat). */
         "hero-grid-scroll": {

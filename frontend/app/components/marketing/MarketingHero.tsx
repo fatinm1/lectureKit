@@ -35,7 +35,7 @@ export function MarketingHero(): JSX.Element {
         */}
         <div className="absolute bottom-[-12%] left-1/2 z-0 -translate-x-1/2 blur-3xl">
           <div
-            className="h-[500px] w-[500px] rounded-full bg-blue-800 opacity-35 motion-safe:animate-hero-glow-float motion-reduce:animate-none"
+            className="h-[600px] w-[600px] rounded-full bg-blue-700 opacity-45 motion-safe:animate-hero-glow-float motion-reduce:animate-none"
             aria-hidden
           />
         </div>
