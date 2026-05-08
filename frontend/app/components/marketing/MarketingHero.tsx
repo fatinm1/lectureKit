@@ -11,7 +11,7 @@ import Link from "next/link";
 const STATS = ["3 AI Agents", "Instant Results", "5 Languages"] as const;
 
 /** Primary stroke for hero grid lines (#5e6ad2 at top of 0.12–0.15 visibility band). */
-const GRID_LINE = "rgba(94, 106, 210, 0.15)";
+const GRID_LINE = "rgba(94, 106, 210, 0.2)";
 
 export function MarketingHero(): JSX.Element {
   /**
@@ -62,7 +62,10 @@ export function MarketingHero(): JSX.Element {
                 WebkitMaskImage:
                   "linear-gradient(to bottom, transparent 0%, rgba(0,0,0,0.85) 24%, black 55%, rgba(0,0,0,0.55) 88%, rgba(0,0,0,0.2) 100%)",
               }}
-            />
+            >
+              {/* Subtle center glow overlay above grid lines */}
+              <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_center,rgba(94,106,210,0.15)_0%,transparent_70%)]" />
+            </div>
           </div>
         </div>
       </div>
