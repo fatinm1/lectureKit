@@ -267,11 +267,9 @@ export function ProcessUrlPanel(): JSX.Element {
   }
 
   return (
-    <section
-      aria-labelledby="app-workspace-title"
-      className="mx-auto flex w-full max-w-content flex-col gap-xl px-md py-section-xl"
-    >
-      <div className="max-w-3xl">
+    <div className="flex min-h-screen flex-col items-center justify-center bg-[#010102] px-6">
+      <section aria-labelledby="app-workspace-title" className="mx-auto w-full max-w-2xl text-center">
+        <div>
         <p className="text-caption font-medium uppercase tracking-[0.22em] text-marketing-muted">
           Workspace
         </p>
@@ -288,9 +286,9 @@ export function ProcessUrlPanel(): JSX.Element {
       {uiMode === "form" ? (
         <form
           onSubmit={handleSubmit}
-          className="flex w-full max-w-xl flex-col gap-md transition-opacity duration-interaction ease-out"
+          className="mx-auto mt-xl flex w-full flex-col gap-md transition-opacity duration-interaction ease-out"
         >
-          <div className="mb-6 flex gap-2">
+          <div className="mb-6 flex justify-center gap-2">
             <button
               type="button"
               onClick={() => setMode("student")}
@@ -314,7 +312,7 @@ export function ProcessUrlPanel(): JSX.Element {
               Faculty
             </button>
           </div>
-          <div className="flex flex-col items-stretch gap-sm sm:flex-row sm:items-center">
+          <div className="flex flex-col items-stretch gap-sm sm:flex-row sm:items-center sm:justify-center">
             <label htmlFor="youtube-url-app" className="sr-only">
               YouTube lecture URL
             </label>
@@ -328,7 +326,7 @@ export function ProcessUrlPanel(): JSX.Element {
               onChange={(e) => setUrl(e.target.value)}
               inputMode="url"
               autoComplete="off"
-              className="min-h-[44px] flex-1 rounded-linear border border-marketing-divider bg-surface-1 px-sm py-xs text-body text-ink outline-none transition duration-interaction ease-out placeholder:text-ink-tertiary focus:border-primary-focus focus:shadow-focus-glow"
+              className="min-h-[44px] w-full flex-1 rounded-linear border border-marketing-divider bg-surface-1 px-sm py-xs text-body text-ink outline-none transition duration-interaction ease-out placeholder:text-ink-tertiary focus:border-primary-focus focus:shadow-focus-glow sm:max-w-xl"
             />
             <button
               type="submit"
@@ -343,7 +341,7 @@ export function ProcessUrlPanel(): JSX.Element {
             </button>
           </div>
 
-          <div className="flex flex-wrap gap-x-lg gap-y-xs text-secondary text-marketing-muted">
+          <div className="flex flex-wrap justify-center gap-x-lg gap-y-xs text-secondary text-marketing-muted">
             {FEATURES.map((label) => (
               <span key={label} className="transition-opacity duration-interaction ease-out hover:opacity-80">
                 {label}
@@ -369,7 +367,7 @@ export function ProcessUrlPanel(): JSX.Element {
           </p>
         </form>
       ) : (
-        <div className="flex w-full max-w-xl flex-col items-center justify-center py-xxl">
+        <div className="mt-xl flex w-full flex-col items-center justify-center py-xxl">
           <div className="w-full">
             <div className="mx-auto w-full max-w-md">
               {steps.map((step) => {
@@ -396,6 +394,7 @@ export function ProcessUrlPanel(): JSX.Element {
           </div>
         </div>
       )}
-    </section>
+      </section>
+    </div>
   );
 }
