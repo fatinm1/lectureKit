@@ -276,11 +276,12 @@ export function ProcessUrlPanel(): JSX.Element {
           Workspace
         </p>
         <h1 id="app-workspace-title" className="mt-sm text-hero text-ink">
-          Generate your study kit
+          {mode === "faculty" ? "Faculty Audit Report" : "Generate your study kit"}
         </h1>
         <p className="mt-md text-body text-marketing-muted">
-          Paste a public YouTube lecture link. LectureKit will orchestrate transcript extraction, analysis,
-          and search indexing — results surface here as soon as the pipeline ships.
+          {mode === "faculty"
+            ? "Paste a public YouTube lecture link. LectureKit will analyze your lecture across pedagogical quality, accessibility, equity, and clarity — and generate a private prioritized fix list with timestamped suggested rewrites."
+            : "Paste a public YouTube lecture link. LectureKit will orchestrate transcript extraction, analysis, and search indexing — results surface here as soon as the pipeline ships."}
         </p>
       </div>
 
@@ -337,8 +338,8 @@ export function ProcessUrlPanel(): JSX.Element {
               {isSubmitting
                 ? "Sending…"
                 : mode === "faculty"
-                  ? "Generate audit report"
-                  : "Generate study kit"}
+                  ? "Generate Audit Report"
+                  : "Generate Study Kit"}
             </button>
           </div>
 
