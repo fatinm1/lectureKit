@@ -1,7 +1,7 @@
 /**
  * App workspace — YouTube URL capture wired to FastAPI `POST /process`.
  *
- * Purpose: Functional surface at `/app` (distinct from marketing `/`).
+ * Purpose: Functional surface at `/app` (distinct from landing `/`).
  * Data flow: Browser → `${NEXT_PUBLIC_API_URL}/process` → structured acknowledgement JSON (logged).
  */
 
@@ -358,11 +358,7 @@ export function ProcessUrlPanel(): JSX.Element {
           <p className="text-caption text-marketing-muted">
             Prefer the story?{" "}
             <Link href="/" className="text-primary transition-colors duration-interaction ease-out hover:text-primary-hover">
-              Back to marketing
-            </Link>
-            {" · "}
-            <Link href="/study" className="text-primary transition-colors duration-interaction ease-out hover:text-primary-hover">
-              Study shell preview
+              Back to landing
             </Link>
           </p>
         </form>
