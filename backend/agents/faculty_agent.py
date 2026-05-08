@@ -65,7 +65,7 @@ class FacultyAgent:
     def _build_prompt(self, *, transcript_text: str, video_id: str) -> str:
         return f"""You are an expert pedagogical reviewer analyzing a lecture transcript for a faculty member. This report is PRIVATE and only for the faculty member — it is not surveillance. Be constructive, specific, and actionable.
 
-IMPORTANT: Respond entirely in English regardless of the language of the transcript.
+IMPORTANT: Respond entirely in English regardless of the language of the transcript. All report content, assessments, suggested rewrites, and fixes must be written in English.
 
 Analyze this lecture transcript and produce a structured audit report in JSON format.
 
