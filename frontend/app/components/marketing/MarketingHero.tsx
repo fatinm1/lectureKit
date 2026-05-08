@@ -31,17 +31,12 @@ export function MarketingHero(): JSX.Element {
       {/* Decorative stack — pointer-events none so anchors remain clickable */}
       <div className="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden>
         {/*
-          Radial glow — blur stays on a static wrapper; only the inner gradient scales.
-          Animating filter+transform together commonly freezes Safari/WebKit tabs.
+          Radial glow — concentrated purple orb (blur on wrapper keeps the core brighter).
         */}
-        <div className="absolute bottom-[-12%] left-1/2 z-0 h-[min(52vh,520px)] w-[min(112vw,920px)] -translate-x-1/2 opacity-90 blur-[48px]">
-          {/* motion-safe wrapper: float moves position only (no size/color/opacity changes). */}
+        <div className="absolute bottom-[-12%] left-1/2 z-0 -translate-x-1/2 blur-2xl">
           <div
-            className="h-full w-full motion-safe:animate-hero-glow-float motion-reduce:animate-none"
-            style={{
-              background:
-                "radial-gradient(ellipse at center, rgba(94, 106, 210, 0.55) 0%, rgba(67, 56, 202, 0.28) 42%, rgba(30, 27, 75, 0.08) 62%, transparent 72%)",
-            }}
+            className="h-[500px] w-[500px] rounded-full bg-purple-500 opacity-60 motion-safe:animate-hero-glow-float motion-reduce:animate-none"
+            aria-hidden
           />
         </div>
 
