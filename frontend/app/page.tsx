@@ -1,34 +1,40 @@
 /**
- * Marketing homepage (`/`) — LectureKit positioning for students and educators.
- *
- * Purpose: Standalone storytelling surface following DESIGN.md + marketing divider/muted palette.
- * Routing: All conversion CTAs route to `/app` where the URL ingest workflow lives.
+ * Marketing homepage (`/`) — Lumina-style dark landing for LectureKit.
  */
 
+import { Playfair_Display } from "next/font/google";
+
 import { MarketingFeatures } from "./components/marketing/MarketingFeatures";
-import { MarketingFinalCta } from "./components/marketing/MarketingFinalCta";
 import { MarketingFooter } from "./components/marketing/MarketingFooter";
 import { MarketingHero } from "./components/marketing/MarketingHero";
 import { MarketingHowItWorks } from "./components/marketing/MarketingHowItWorks";
 import { MarketingNav } from "./components/marketing/MarketingNav";
-import { MarketingProductPreview } from "./components/marketing/MarketingProductPreview";
+import { MarketingStats } from "./components/marketing/MarketingStats";
+import { MarketingTechStack } from "./components/marketing/MarketingTechStack";
+import { MarketingWhySection } from "./components/marketing/MarketingWhySection";
+
+import "./components/marketing/lumina.css";
+
+const playfair = Playfair_Display({
+  subsets: ["latin"],
+  variable: "--font-lecturekit-serif",
+  display: "swap",
+});
 
 export default function MarketingHomePage(): JSX.Element {
-  /**
-   * Stack ordered marketing sections top-to-bottom with global fade-in on first paint.
-   *
-   * Steps:
-   * 1. Pin navigation above scrolling narrative sections.
-   * 2. Maintain minimum 120px vertical rhythm via `py-section-xl` tokens inside sections.
-   */
   return (
-    <div className="min-h-screen bg-canvas text-ink animate-fade-in [--tw-duration:300ms]">
+    <div
+      className={`${playfair.variable} lk-marketing-scrollbar flex min-h-screen flex-col overflow-x-hidden bg-zinc-950 font-sans text-zinc-200 antialiased selection:bg-[#5e6ad2]/30`}
+    >
       <MarketingNav />
-      <MarketingHero />
-      <MarketingProductPreview />
-      <MarketingHowItWorks />
-      <MarketingFeatures />
-      <MarketingFinalCta />
+      <main className="flex-grow">
+        <MarketingHero />
+        <MarketingFeatures />
+        <MarketingHowItWorks />
+        <MarketingWhySection />
+        <MarketingTechStack />
+        <MarketingStats />
+      </main>
       <MarketingFooter />
     </div>
   );

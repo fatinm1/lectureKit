@@ -1,0 +1,53 @@
+/* Lumina-style landing — scroll reveal, float animations, dark scrollbar (marketing route only) */
+
+.font-lk-serif {
+  font-family: var(--font-lecturekit-serif), ui-serif, Georgia, "Times New Roman", serif;
+}
+
+.lk-animate-on-scroll-hidden {
+  opacity: 0;
+  transform: translateY(20px);
+  transition:
+    opacity 0.8s ease-out,
+    transform 0.8s ease-out;
+}
+
+.lk-animate-on-scroll-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+@keyframes lk-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-20px);
+  }
+}
+
+.lk-float-slow {
+  animation: lk-float 6s ease-in-out infinite;
+}
+
+.lk-float-delayed {
+  animation: lk-float 7s ease-in-out 1s infinite;
+}
+
+.lk-marketing-scrollbar ::-webkit-scrollbar {
+  width: 8px;
+}
+
+.lk-marketing-scrollbar ::-webkit-scrollbar-track {
+  background: #09090b;
+}
+
+.lk-marketing-scrollbar ::-webkit-scrollbar-thumb {
+  background: #27272a;
+  border-radius: 4px;
+}
+
+.lk-marketing-scrollbar ::-webkit-scrollbar-thumb:hover {
+  background: #3f3f46;
+}
