@@ -15,16 +15,14 @@ import type { FacultySession, LectureSession, ProvostSession } from "../../../ty
 
 const FEATURES = ["Instant Summaries", "Smart Flashcards", "Semantic Search"] as const;
 
+const BTN_PRIMARY =
+  "rounded-full bg-[#5e6ad2] px-5 py-2 text-sm font-medium text-white transition-colors hover:bg-[#4f5ec0] disabled:cursor-not-allowed disabled:opacity-60";
+const BTN_SECONDARY =
+  "rounded-full border border-[#2a2a2a] px-5 py-2 text-sm font-medium text-zinc-400 transition-colors hover:border-[#5e6ad2] hover:text-white";
+const INPUT_BASE =
+  "min-h-[44px] w-full rounded-lg border border-white/10 bg-zinc-900 px-3 py-2 text-sm text-white outline-none transition-colors placeholder:text-zinc-500 focus:border-[#5e6ad2]/60 focus:ring-1 focus:ring-[#5e6ad2]";
+
 function getApiBaseUrl(): string {
-  /**
-   * Resolve backend origin for client-side requests.
-   *
-   * Returns: Non-empty origin without trailing slash.
-   *
-   * Steps:
-   * 1. Prefer `NEXT_PUBLIC_API_URL` when defined at build time.
-   * 2. Fall back to local FastAPI default for development ergonomics.
-   */
   const raw = process.env.NEXT_PUBLIC_API_URL?.trim();
   return raw && raw.length > 0 ? raw.replace(/\/$/, "") : "http://localhost:8000";
 }
@@ -55,16 +53,16 @@ export function ProcessUrlPanel(): JSX.Element {
           { id: 3 as const, label: "Generating curriculum map" },
         ] as const)
       : mode === "faculty"
-      ? ([
-          { id: 1 as const, label: "Fetching transcript" },
-          { id: 2 as const, label: "Analyzing lecture quality" },
-          { id: 3 as const, label: "Generating audit report" },
-        ] as const)
-      : ([
-          { id: 1 as const, label: "Fetching transcript" },
-          { id: 2 as const, label: "Analyzing content" },
-          { id: 3 as const, label: "Building study kit" },
-        ] as const);
+        ? ([
+            { id: 1 as const, label: "Fetching transcript" },
+            { id: 2 as const, label: "Analyzing lecture quality" },
+            { id: 3 as const, label: "Generating audit report" },
+          ] as const)
+        : ([
+            { id: 1 as const, label: "Fetching transcript" },
+            { id: 2 as const, label: "Analyzing content" },
+            { id: 3 as const, label: "Building study kit" },
+          ] as const);
   }, [mode]);
 
   function clearTimers(): void {
@@ -166,14 +164,6 @@ export function ProcessUrlPanel(): JSX.Element {
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    /**
-     * Submit the lecture URL for orchestration (stub in Part 1).
-     *
-     * Steps:
-     * 1. Prevent full-page reload on submit.
-     * 2. Serialize `{ youtube_url }` per backend schema.
-     * 3. Log responses for engineers/judges and mirror failures into `statusMessage`.
-     */
     event.preventDefault();
     setStatusMessage(null);
     setIsSubmitting(true);
@@ -181,10 +171,8 @@ export function ProcessUrlPanel(): JSX.Element {
     startStepperTimers();
 
     try {
-      // Step: Provide a friendly client-side check so users get immediate feedback.
       try {
         if (mode === "provost") {
-          // Validate each URL in the textarea
           const urls = provostUrls
             .split("\n")
             .map((u) => u.trim())
@@ -253,9 +241,7 @@ export function ProcessUrlPanel(): JSX.Element {
                 ? "The transcript fetch timed out. Please try again."
                 : "Request failed. Please try again.";
 
-        // Step: Keep a short technical tail for debugging without dumping raw JSON.
-        const technicalTail =
-          detailValue && typeof detailValue === "string" ? ` (${detailValue})` : "";
+        const technicalTail = detailValue && typeof detailValue === "string" ? ` (${detailValue})` : "";
 
         setStatusMessage(`${friendly}${technicalTail}`);
         return;
@@ -263,7 +249,6 @@ export function ProcessUrlPanel(): JSX.Element {
 
       setCompletedSteps({ 1: true, 2: true, 3: true });
 
-      // Step: Store the full session, then navigate.
       if (mode === "faculty") {
         persistFacultySession(payload);
       } else if (mode === "provost") {
@@ -290,11 +275,11 @@ export function ProcessUrlPanel(): JSX.Element {
     const { label, state } = props;
 
     const labelClass =
-      state === "active" ? "text-ink" : state === "complete" ? "text-marketing-muted" : "text-marketing-muted";
+      state === "active" ? "text-white" : state === "complete" ? "text-zinc-500" : "text-zinc-500";
 
     return (
-      <div className="flex items-center gap-md py-md">
-        <div className="flex h-5 w-5 items-center justify-center">
+      <div className="flex items-center gap-4 py-4">
+        <div className="flex h-5 w-5 shrink-0 items-center justify-center">
           {state === "active" ? (
             <span
               className="motion-safe:animate-pulse motion-reduce:animate-none"
@@ -307,7 +292,7 @@ export function ProcessUrlPanel(): JSX.Element {
               }}
             />
           ) : state === "complete" ? (
-            <span className="text-primary" aria-hidden="true">
+            <span className="text-[#1d9e75]" aria-hidden="true">
               ✓
             </span>
           ) : (
@@ -317,196 +302,155 @@ export function ProcessUrlPanel(): JSX.Element {
                 width: 6,
                 height: 6,
                 borderRadius: 9999,
-                backgroundColor: "#1a1a1a",
+                backgroundColor: "#27272a",
               }}
             />
           )}
         </div>
-        <p className={`text-body transition-colors duration-interaction ease-out ${labelClass}`}>{label}</p>
+        <p className={`text-sm transition-colors ${labelClass}`}>{label}</p>
       </div>
     );
   }
 
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center bg-[#010102] px-6">
+    <div className="flex flex-col items-center justify-center px-6 pb-16 pt-10">
       <section aria-labelledby="app-workspace-title" className="mx-auto w-full max-w-2xl text-center">
-        <div>
-        <p className="text-caption font-medium uppercase tracking-[0.22em] text-marketing-muted">
-          Workspace
-        </p>
-        <h1 id="app-workspace-title" className="mt-sm text-hero text-ink">
+        <p className="text-xs font-semibold uppercase tracking-widest text-zinc-500">Workspace</p>
+        <h1 id="app-workspace-title" className="mt-3 font-lk-serif text-3xl text-white md:text-4xl">
           {mode === "provost"
             ? "Curriculum Coverage Map"
             : mode === "faculty"
               ? "Faculty Audit Report"
               : "Generate your study kit"}
         </h1>
-        <p className="mt-md text-body text-marketing-muted">
+        <p className="mt-4 text-sm leading-relaxed text-zinc-400">
           {mode === "provost"
             ? "Paste up to 10 YouTube lecture URLs from a single course and your learning objectives. LectureKit will map what was actually taught against what the course promises to deliver."
             : mode === "faculty"
               ? "Paste a public YouTube lecture link. LectureKit will analyze your lecture across pedagogical quality, accessibility, equity, and clarity — and generate a private prioritized fix list with timestamped suggested rewrites."
               : "Paste a public YouTube lecture link. LectureKit will orchestrate transcript extraction, analysis, and search indexing — results surface here as soon as the pipeline ships."}
         </p>
-      </div>
 
-      {uiMode === "form" ? (
-        <form
-          onSubmit={handleSubmit}
-          className="mx-auto mt-xl flex w-full flex-col gap-md transition-opacity duration-interaction ease-out"
-        >
-          <div className="mb-6 flex justify-center gap-2">
-            <button
-              type="button"
-              onClick={() => setMode("student")}
-              className={`rounded-md px-4 py-2 text-sm font-medium transition-all duration-200 ${
-                mode === "student"
-                  ? "bg-[#5e6ad2] text-white"
-                  : "border border-[#2a2a2a] text-[#a1a1aa] hover:border-[#5e6ad2] hover:text-white"
-              }`}
-            >
-              Student
-            </button>
-            <button
-              type="button"
-              onClick={() => setMode("faculty")}
-              className={`rounded-md px-4 py-2 text-sm font-medium transition-all duration-200 ${
-                mode === "faculty"
-                  ? "bg-[#5e6ad2] text-white"
-                  : "border border-[#2a2a2a] text-[#a1a1aa] hover:border-[#5e6ad2] hover:text-white"
-              }`}
-            >
-              Faculty
-            </button>
-            <button
-              type="button"
-              onClick={() => setMode("provost")}
-              className={`rounded-md px-4 py-2 text-sm font-medium transition-all duration-200 ${
-                mode === "provost"
-                  ? "bg-[#5e6ad2] text-white"
-                  : "border border-[#2a2a2a] text-[#a1a1aa] hover:border-[#5e6ad2] hover:text-white"
-              }`}
-            >
-              Provost
-            </button>
-          </div>
-          {mode === "provost" ? (
-            <div className="flex w-full flex-col gap-md text-left">
-              <label htmlFor="provost-urls" className="text-caption font-medium uppercase tracking-[0.22em] text-marketing-muted">
-                Lecture URLs (up to 10, one per line)
-              </label>
-              <textarea
-                id="provost-urls"
-                value={provostUrls}
-                onChange={(e) => setProvostUrls(e.target.value)}
-                rows={6}
-                placeholder={"https://www.youtube.com/watch?v=...\nhttps://www.youtube.com/watch?v=..."}
-                className="w-full rounded-linear border border-marketing-divider bg-surface-1 px-sm py-xs text-body text-ink outline-none transition duration-interaction ease-out placeholder:text-ink-tertiary focus:border-primary-focus focus:shadow-focus-glow"
-              />
-              <label
-                htmlFor="provost-objectives"
-                className="text-caption font-medium uppercase tracking-[0.22em] text-marketing-muted"
-              >
-                Learning objectives
-              </label>
-              <textarea
-                id="provost-objectives"
-                value={learningObjectives}
-                onChange={(e) => setLearningObjectives(e.target.value)}
-                rows={5}
-                placeholder={"1) ...\n2) ...\n3) ..."}
-                className="w-full rounded-linear border border-marketing-divider bg-surface-1 px-sm py-xs text-body text-ink outline-none transition duration-interaction ease-out placeholder:text-ink-tertiary focus:border-primary-focus focus:shadow-focus-glow"
-              />
-              <div className="flex justify-center">
-                <button
-                  type="submit"
-                  disabled={isSubmitting}
-                  className="min-h-[44px] rounded-linear bg-primary px-[14px] py-[8px] text-button font-medium text-onprimary transition duration-interaction ease-out hover:bg-primary-hover active:bg-primary-focus disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {isSubmitting ? "Sending…" : "Generate Curriculum Map"}
-                </button>
-              </div>
-            </div>
-          ) : (
-            <div className="flex flex-col items-stretch gap-sm sm:flex-row sm:items-center sm:justify-center">
-              <label htmlFor="youtube-url-app" className="sr-only">
-                YouTube lecture URL
-              </label>
-              <input
-                id="youtube-url-app"
-                name="youtube-url-app"
-                type="text"
-                required
-                placeholder="https://www.youtube.com/watch?v=..."
-                value={url}
-                onChange={(e) => setUrl(e.target.value)}
-                inputMode="url"
-                autoComplete="off"
-                className="min-h-[44px] w-full flex-1 rounded-linear border border-marketing-divider bg-surface-1 px-sm py-xs text-body text-ink outline-none transition duration-interaction ease-out placeholder:text-ink-tertiary focus:border-primary-focus focus:shadow-focus-glow sm:max-w-xl"
-              />
-              <button
-                type="submit"
-                disabled={isSubmitting}
-                className="min-h-[44px] rounded-linear bg-primary px-[14px] py-[8px] text-button font-medium text-onprimary transition duration-interaction ease-out hover:bg-primary-hover active:bg-primary-focus disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {isSubmitting
-                  ? "Sending…"
-                  : mode === "faculty"
-                    ? "Generate Audit Report"
-                    : "Generate Study Kit"}
+        {uiMode === "form" ? (
+          <form
+            onSubmit={handleSubmit}
+            className="mx-auto mt-10 flex w-full flex-col gap-6 transition-opacity duration-200"
+          >
+            <div className="flex flex-wrap justify-center gap-2">
+              <button type="button" onClick={() => setMode("student")} className={mode === "student" ? BTN_PRIMARY : BTN_SECONDARY}>
+                Student
+              </button>
+              <button type="button" onClick={() => setMode("faculty")} className={mode === "faculty" ? BTN_PRIMARY : BTN_SECONDARY}>
+                Faculty
+              </button>
+              <button type="button" onClick={() => setMode("provost")} className={mode === "provost" ? BTN_PRIMARY : BTN_SECONDARY}>
+                Provost
               </button>
             </div>
-          )}
 
-          <div className="flex flex-wrap justify-center gap-x-lg gap-y-xs text-secondary text-marketing-muted">
-            {FEATURES.map((label) => (
-              <span key={label} className="transition-opacity duration-interaction ease-out hover:opacity-80">
-                {label}
-              </span>
-            ))}
-          </div>
+            {mode === "provost" ? (
+              <div className="flex w-full flex-col gap-4 text-left">
+                <label htmlFor="provost-urls" className="text-xs font-semibold uppercase tracking-widest text-zinc-500">
+                  Lecture URLs (up to 10, one per line)
+                </label>
+                <textarea
+                  id="provost-urls"
+                  value={provostUrls}
+                  onChange={(e) => setProvostUrls(e.target.value)}
+                  rows={6}
+                  placeholder={"https://www.youtube.com/watch?v=...\nhttps://www.youtube.com/watch?v=..."}
+                  className={`${INPUT_BASE} min-h-[140px] resize-y py-3`}
+                />
+                <label htmlFor="provost-objectives" className="text-xs font-semibold uppercase tracking-widest text-zinc-500">
+                  Learning objectives
+                </label>
+                <textarea
+                  id="provost-objectives"
+                  value={learningObjectives}
+                  onChange={(e) => setLearningObjectives(e.target.value)}
+                  rows={5}
+                  placeholder={"1) ...\n2) ...\n3) ..."}
+                  className={`${INPUT_BASE} min-h-[120px] resize-y py-3`}
+                />
+                <div className="flex justify-center pt-2">
+                  <button type="submit" disabled={isSubmitting} className={`${BTN_PRIMARY} min-h-[44px] px-8`}>
+                    {isSubmitting ? "Sending…" : "Generate Curriculum Map"}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="flex flex-col items-stretch gap-3 sm:flex-row sm:items-center sm:justify-center">
+                <label htmlFor="youtube-url-app" className="sr-only">
+                  YouTube lecture URL
+                </label>
+                <input
+                  id="youtube-url-app"
+                  name="youtube-url-app"
+                  type="text"
+                  required
+                  placeholder="https://www.youtube.com/watch?v=..."
+                  value={url}
+                  onChange={(e) => setUrl(e.target.value)}
+                  inputMode="url"
+                  autoComplete="off"
+                  className={`${INPUT_BASE} sm:max-w-xl sm:flex-1`}
+                />
+                <button type="submit" disabled={isSubmitting} className={`${BTN_PRIMARY} min-h-[44px] shrink-0`}>
+                  {isSubmitting
+                    ? "Sending…"
+                    : mode === "faculty"
+                      ? "Generate Audit Report"
+                      : "Generate Study Kit"}
+                </button>
+              </div>
+            )}
 
-          {statusMessage ? (
-            <p className="text-secondary text-ink-muted" role="status">
-              {statusMessage}
+            <div className="flex flex-wrap justify-center gap-x-6 gap-y-2 text-sm text-zinc-500">
+              {FEATURES.map((label) => (
+                <span key={label} className="transition-opacity hover:opacity-80">
+                  {label}
+                </span>
+              ))}
+            </div>
+
+            {statusMessage ? (
+              <p className="text-sm text-[#e53e3e]" role="status">
+                {statusMessage}
+              </p>
+            ) : null}
+
+            <p className="text-xs text-zinc-500">
+              Prefer the story?{" "}
+              <Link href="/" className="text-[#5e6ad2] transition-colors hover:text-white">
+                Back to landing
+              </Link>
             </p>
-          ) : null}
-
-          <p className="text-caption text-marketing-muted">
-            Prefer the story?{" "}
-            <Link href="/" className="text-primary transition-colors duration-interaction ease-out hover:text-primary-hover">
-              Back to landing
-            </Link>
-          </p>
-        </form>
-      ) : (
-        <div className="mt-xl flex w-full flex-col items-center justify-center py-xxl">
-          <div className="w-full">
-            <div className="mx-auto w-full max-w-md">
+          </form>
+        ) : (
+          <div className="mt-10 flex w-full flex-col items-center justify-center py-8">
+            <div className="w-full rounded-2xl border border-white/5 bg-zinc-900/50 p-6 transition-colors hover:border-white/10 sm:max-w-md">
               {steps.map((step) => {
-                const state =
-                  completedSteps[step.id] ? "complete" : activeStep === step.id ? "active" : "inactive";
+                const state = completedSteps[step.id] ? "complete" : activeStep === step.id ? "active" : "inactive";
                 return <StepIndicator key={step.id} label={step.label} state={state} />;
               })}
             </div>
 
             {statusMessage ? (
-              <div className="mt-lg text-center">
-                <p className="text-secondary text-[#d16a6a]" role="status">
+              <div className="mt-8 text-center">
+                <p className="text-sm text-[#e53e3e]" role="status">
                   {statusMessage}
                 </p>
                 <button
                   type="button"
                   onClick={() => resetToForm()}
-                  className="mt-md text-button font-medium text-marketing-muted transition duration-interaction ease-out hover:text-ink"
+                  className="mt-4 text-sm font-medium text-zinc-400 transition-colors hover:text-white"
                 >
                   Retry
                 </button>
               </div>
             ) : null}
           </div>
-        </div>
-      )}
+        )}
       </section>
     </div>
   );

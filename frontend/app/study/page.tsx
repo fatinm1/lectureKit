@@ -13,9 +13,11 @@
 
 "use client";
 
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
+
+import { AppSubpageHeader } from "../components/app/AppSubpageHeader";
+import { MarketingScrollReveal } from "../components/marketing/MarketingScrollReveal";
 
 import type { LectureSession } from "../../types/lecture";
 import { formatTimestamp } from "../../utils/format";
@@ -47,6 +49,10 @@ const LANGUAGE_OPTIONS: Array<{ code: LanguageCode; label: string; target: strin
   { code: "bn", label: "Bengali", target: "Bengali" },
   { code: "ar", label: "Arabic", target: "Arabic" },
 ];
+
+const PILL_ACTIVE = "bg-[#5e6ad2] text-white shadow-sm";
+const PILL_INACTIVE =
+  "border border-[#2a2a2a] text-zinc-400 hover:border-[#5e6ad2] hover:text-white transition-colors";
 
 function formatProcessedAt(iso: string): string {
   const date = new Date(iso);
@@ -161,7 +167,6 @@ export default function StudyPage(): JSX.Element {
   );
 
   useEffect(() => {
-    // Step: Reset flashcard flip state when switching cards/tabs.
     setIsCardFlipped(false);
   }, [cardIndex, rightTab]);
 
@@ -201,9 +206,7 @@ export default function StudyPage(): JSX.Element {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(requestBody),
       });
-      const payload = (await response.json().catch(() => null)) as
-        | { content?: unknown; detail?: string }
-        | null;
+      const payload = (await response.json().catch(() => null)) as { content?: unknown; detail?: string } | null;
       if (!response.ok) {
         setTranslateError("Translation failed. Showing English content.");
         setLanguage("en");
@@ -223,17 +226,11 @@ export default function StudyPage(): JSX.Element {
       const patch: Partial<LectureSession> = {
         outline: Array.isArray(translatedObj.outline) ? translatedObj.outline : baseSession.outline,
         summary_90s:
-          typeof translatedObj.summary_90s === "string"
-            ? translatedObj.summary_90s
-            : baseSession.summary_90s,
+          typeof translatedObj.summary_90s === "string" ? translatedObj.summary_90s : baseSession.summary_90s,
         summary_5min:
-          typeof translatedObj.summary_5min === "string"
-            ? translatedObj.summary_5min
-            : baseSession.summary_5min,
+          typeof translatedObj.summary_5min === "string" ? translatedObj.summary_5min : baseSession.summary_5min,
         summary_full:
-          typeof translatedObj.summary_full === "string"
-            ? translatedObj.summary_full
-            : baseSession.summary_full,
+          typeof translatedObj.summary_full === "string" ? translatedObj.summary_full : baseSession.summary_full,
         flashcards: Array.isArray(translatedObj.flashcards) ? translatedObj.flashcards : baseSession.flashcards,
       };
 
@@ -288,7 +285,6 @@ export default function StudyPage(): JSX.Element {
       const results = payload && typeof payload === "object" && "results" in payload ? payload.results : [];
       const baseResults = Array.isArray(results) ? results : [];
 
-      // Step: Translate search result text if a non-English language is selected.
       if (language !== "en" && baseSession) {
         const cacheKey = `${language}:${q}`;
         const cached = searchTranslationCacheRef.current.get(cacheKey);
@@ -338,132 +334,105 @@ export default function StudyPage(): JSX.Element {
 
   if (!session || !baseSession) {
     return (
-      <main className="min-h-screen bg-canvas text-ink flex items-center justify-center px-md">
-        <p className="text-secondary text-marketing-muted">Loading session…</p>
+      <main className="flex min-h-screen items-center justify-center bg-zinc-950 px-6 text-zinc-400">
+        <p>Loading session…</p>
       </main>
     );
   }
 
+  const headerRight = (
+    <>
+      {isTranslating ? (
+        <span
+          aria-label="Translating"
+          className="h-4 w-4 shrink-0 rounded-full border-2 border-white/10 border-t-[#5e6ad2] motion-safe:animate-spin motion-reduce:animate-none"
+        />
+      ) : null}
+      <select
+        aria-label="Language"
+        value={language}
+        onChange={(e) => translateTo(e.target.value as LanguageCode)}
+        className="h-9 rounded-lg border border-white/10 bg-zinc-900 px-3 text-sm text-white outline-none transition-colors focus:border-[#5e6ad2]/60"
+      >
+        {LANGUAGE_OPTIONS.map((opt) => (
+          <option key={opt.code} value={opt.code}>
+            {opt.label}
+          </option>
+        ))}
+      </select>
+    </>
+  );
+
   return (
-    <div className="min-h-screen bg-canvas text-ink">
-      {/* Top nav */}
-      <header className="border-b border-marketing-divider bg-canvas/90 backdrop-blur-md">
-        <div className="mx-auto flex h-14 max-w-content items-center justify-between px-md">
-          <Link
-            href="/"
-            className="inline-flex items-center gap-sm text-[15px] font-semibold tracking-tight text-ink transition-opacity duration-interaction ease-out hover:opacity-90"
-          >
-            <span aria-hidden="true" className="text-marketing-muted">
-              ←
-            </span>
-            <span>LectureKit</span>
-          </Link>
-
-          <div className="flex items-center gap-sm">
-            {isTranslating ? (
-              <span
-                aria-label="Translating"
-                className="h-4 w-4 rounded-full border border-marketing-divider border-t-primary motion-safe:animate-spin motion-reduce:animate-none"
-              />
-            ) : null}
-
-            <select
-              aria-label="Language"
-              value={language}
-              onChange={(e) => translateTo(e.target.value as LanguageCode)}
-              className="h-9 rounded-linear border border-marketing-divider bg-canvas px-sm text-secondary text-ink transition duration-interaction ease-out focus:border-primary-focus focus:shadow-focus-glow"
-            >
-              {LANGUAGE_OPTIONS.map((opt) => (
-                <option key={opt.code} value={opt.code}>
-                  {opt.label}
-                </option>
-              ))}
-            </select>
+    <div className="min-h-screen bg-zinc-950 text-zinc-200">
+      <AppSubpageHeader title="Study dashboard" right={headerRight} />
+      {translateError ? (
+        <div className="border-b border-white/5 bg-zinc-950 px-6 py-2">
+          <div className="mx-auto max-w-[1600px]">
+            <p className="text-xs text-[#e53e3e]">{translateError}</p>
           </div>
         </div>
-        {translateError ? (
-          <div className="mx-auto max-w-content px-md pb-sm">
-            <p className="text-caption text-[#d16a6a]">{translateError}</p>
-          </div>
-        ) : null}
-      </header>
+      ) : null}
 
-      {/* Processing stats bar */}
-      <div className="border-b border-marketing-divider">
-        <div className="mx-auto flex max-w-content flex-col gap-xxs px-md py-sm text-caption text-marketing-muted sm:flex-row sm:items-center sm:justify-between">
-          <span className="font-mono text-primary">video_id: {session.video_id}</span>
+      <div className="border-b border-white/5">
+        <div className="mx-auto flex max-w-[1600px] flex-col gap-1 px-6 py-3 text-xs text-zinc-500 sm:flex-row sm:items-center sm:justify-between">
+          <span className="font-mono text-[#5e6ad2]">video_id: {session.video_id}</span>
           <span>{session.chunk_count} chunks processed</span>
           <span>Processed {processedLabel}</span>
         </div>
       </div>
 
-      {/* Main layout */}
-      <main className="mx-auto max-w-content px-md py-lg">
-        <div className="grid grid-cols-1 gap-lg md:grid-cols-1 md:gap-0 lg:grid-cols-[0.9fr_1.8fr_0.9fr]">
-          {/* Left column — Outline */}
-          <section className="lg:pr-lg">
-            <div className="flex items-center justify-between">
-              <p className="text-caption font-medium uppercase tracking-[0.22em] text-marketing-muted">
-                Outline
-              </p>
-            </div>
-            <div className="mt-sm h-px w-full bg-marketing-divider" aria-hidden="true" />
-
-            <ul className="divide-y divide-marketing-divider">
-              {session.outline.map((item, idx) => {
-                const isActive = idx === activeOutlineIndex;
-                return (
-                  <li key={`${item.timestamp}-${item.title}`}>
-                    <div
-                      role="button"
-                      tabIndex={0}
-                      onKeyDown={(e) => {
-                        if (!isActivationKey(e.key)) return;
-                        e.preventDefault();
-                        setActiveOutlineIndex(idx);
-                        seekTo(item.timestamp);
-                      }}
-                      onClick={() => {
-                        setActiveOutlineIndex(idx);
-                        seekTo(item.timestamp);
-                      }}
-                      className={[
-                        "group w-full text-left py-md pl-md pr-sm transition duration-interaction ease-out",
-                        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-canvas",
-                        isActive ? "border-l-2 border-primary/40" : "border-l-2 border-transparent",
-                        "hover:border-primary/40",
-                        "cursor-pointer select-none",
-                      ].join(" ")}
-                    >
-                      <div className="flex items-start gap-md">
-                        <span className="shrink-0 font-mono text-[12px] tabular-nums text-primary pointer-events-none">
-                          {formatTimestamp(item.timestamp)}
-                        </span>
-                        <div className="min-w-0">
-                          <p className="text-secondary text-ink transition-colors duration-interaction ease-out group-hover:text-ink-muted">
-                            {item.title}
-                          </p>
-                          <p className="mt-xxs text-caption text-marketing-muted">{item.description}</p>
+      <main className="mx-auto max-w-[1600px] px-6 py-8">
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-[0.9fr_1.8fr_0.9fr]">
+          <section className="lg:pr-2">
+            <p className="text-xs font-semibold uppercase tracking-widest text-zinc-500">Outline</p>
+            <MarketingScrollReveal className="mt-3 rounded-xl border border-white/5 bg-zinc-900/50 p-2 transition-colors hover:border-white/10">
+              <ul className="max-h-[70vh] divide-y divide-white/5 overflow-auto pr-1">
+                {session.outline.map((item, idx) => {
+                  const isActive = idx === activeOutlineIndex;
+                  return (
+                    <li key={`${item.timestamp}-${item.title}`}>
+                      <div
+                        role="button"
+                        tabIndex={0}
+                        onKeyDown={(e) => {
+                          if (!isActivationKey(e.key)) return;
+                          e.preventDefault();
+                          setActiveOutlineIndex(idx);
+                          seekTo(item.timestamp);
+                        }}
+                        onClick={() => {
+                          setActiveOutlineIndex(idx);
+                          seekTo(item.timestamp);
+                        }}
+                        className={[
+                          "group w-full cursor-pointer select-none rounded-lg py-3 pl-3 pr-2 text-left transition-colors",
+                          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#5e6ad2] focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-950",
+                          isActive ? "border-l-2 border-[#5e6ad2] bg-white/[0.03]" : "border-l-2 border-transparent hover:border-[#5e6ad2]/40",
+                        ].join(" ")}
+                      >
+                        <div className="flex items-start gap-3">
+                          <span className="pointer-events-none shrink-0 font-mono text-xs tabular-nums text-[#5e6ad2]">
+                            {formatTimestamp(item.timestamp)}
+                          </span>
+                          <div className="min-w-0">
+                            <p className="text-sm text-white transition-colors group-hover:text-zinc-200">{item.title}</p>
+                            <p className="mt-1 text-xs text-zinc-500">{item.description}</p>
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  </li>
-                );
-              })}
-            </ul>
+                    </li>
+                  );
+                })}
+              </ul>
+            </MarketingScrollReveal>
           </section>
 
-          {/* Center column — placeholder for Step 3 */}
-          <section className="lg:px-lg lg:border-l lg:border-marketing-divider">
-            <p className="text-caption font-medium uppercase tracking-[0.22em] text-marketing-muted">
-              Lecture
-            </p>
-            <div className="mt-sm h-px w-full bg-marketing-divider" aria-hidden="true" />
-
-            {/* YouTube player */}
-            <div className="mt-lg w-full">
-              <div className="relative w-full overflow-hidden">
-                <div className="w-full pt-[56.25%]" aria-hidden="true" />
+          <section className="lg:px-4">
+            <p className="text-xs font-semibold uppercase tracking-widest text-zinc-500">Lecture</p>
+            <div className="mt-3 overflow-hidden rounded-xl border border-white/5">
+              <div className="relative w-full">
+                <div className="w-full pt-[56.25%]" aria-hidden />
                 <iframe
                   id="yt-player"
                   title="YouTube player"
@@ -475,9 +444,8 @@ export default function StudyPage(): JSX.Element {
               </div>
             </div>
 
-            {/* Summary depth selector */}
-            <div className="mt-xl">
-              <div className="flex items-center gap-lg text-caption font-medium uppercase tracking-[0.18em]">
+            <div className="mt-8">
+              <div className="flex flex-wrap items-center gap-2">
                 {summaryTabs.map((t) => {
                   const active = summaryDepth === t.id;
                   return (
@@ -485,77 +453,44 @@ export default function StudyPage(): JSX.Element {
                       key={t.id}
                       type="button"
                       onClick={() => setSummaryDepth(t.id)}
-                      className={[
-                        "relative pb-xs transition-colors duration-interaction ease-out",
-                        active ? "text-ink" : "text-marketing-muted hover:text-ink",
-                      ].join(" ")}
+                      className={`rounded-full px-4 py-1.5 text-xs font-medium transition-colors ${active ? PILL_ACTIVE : `${PILL_INACTIVE}`}`}
                     >
-                      <span>{t.label}</span>
-                      <span
-                        aria-hidden="true"
-                        className={[
-                          "absolute inset-x-0 -bottom-[1px] h-[2px] transition-all duration-interaction ease-out",
-                          active ? "bg-primary" : "bg-transparent",
-                        ].join(" ")}
-                      />
+                      {t.label}
                     </button>
                   );
                 })}
               </div>
-
-              <div className="mt-lg">
-                <p className="text-body text-ink whitespace-pre-line">{activeSummary}</p>
+              <div className="mt-6">
+                <p className="whitespace-pre-line text-sm leading-relaxed text-zinc-300">{activeSummary}</p>
               </div>
             </div>
           </section>
 
-          {/* Right column — placeholder for Step 4 */}
-          <section className="lg:pl-lg lg:border-l lg:border-marketing-divider">
-            {/* Tabs header */}
+          <section className="lg:pl-2">
             <div className="relative">
-              <div className="flex items-end justify-between gap-lg">
-                <div className="flex gap-lg text-secondary">
-                  {rightTabs.map((t) => {
-                    const active = rightTab === t.id;
-                    return (
-                      <button
-                        key={t.id}
-                        type="button"
-                        onClick={() => setRightTab(t.id)}
-                        className={[
-                          "relative pb-sm transition-colors duration-interaction ease-out",
-                          active ? "text-ink" : "text-marketing-muted hover:text-ink",
-                        ].join(" ")}
-                      >
-                        {t.label}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/* Sliding underline */}
-              <div className="mt-xs h-px w-full bg-marketing-divider" aria-hidden="true" />
-              <div
-                aria-hidden="true"
-                className="relative h-[2px] w-full"
-                style={{ marginTop: -1 }}
-              >
-                <div
-                  className="absolute bottom-0 h-[2px] bg-primary transition-all duration-interaction ease-out"
-                  style={{
-                    width: "33.333%",
-                    left: rightTab === "summary" ? "0%" : rightTab === "flashcards" ? "33.333%" : "66.666%",
-                  }}
-                />
+              <div className="flex flex-wrap items-end gap-2">
+                {rightTabs.map((t) => {
+                  const active = rightTab === t.id;
+                  return (
+                    <button
+                      key={t.id}
+                      type="button"
+                      onClick={() => setRightTab(t.id)}
+                      className={`rounded-full px-4 py-1.5 text-sm font-medium transition-colors ${
+                        active ? PILL_ACTIVE : `${PILL_INACTIVE}`
+                      }`}
+                    >
+                      {t.label}
+                    </button>
+                  );
+                })}
               </div>
             </div>
 
-            {/* Tab content */}
-            <div className="mt-lg">
+            <div className="mt-6">
               {rightTab === "summary" ? (
-                <div className="flex flex-col gap-lg">
-                  <div className="flex items-center gap-lg text-caption font-medium uppercase tracking-[0.18em]">
+                <div className="flex flex-col gap-6">
+                  <div className="flex flex-wrap gap-2">
                     {summaryTabs.map((t) => {
                       const active = summaryDepth === t.id;
                       return (
@@ -563,71 +498,52 @@ export default function StudyPage(): JSX.Element {
                           key={t.id}
                           type="button"
                           onClick={() => setSummaryDepth(t.id)}
-                          className={[
-                            "relative pb-xs transition-colors duration-interaction ease-out",
-                            active ? "text-ink" : "text-marketing-muted hover:text-ink",
-                          ].join(" ")}
+                          className={`rounded-full px-4 py-1.5 text-xs font-medium transition-colors ${active ? PILL_ACTIVE : `${PILL_INACTIVE}`}`}
                         >
-                          <span>{t.label}</span>
-                          <span
-                            aria-hidden="true"
-                            className={[
-                              "absolute inset-x-0 -bottom-[1px] h-[2px] transition-all duration-interaction ease-out",
-                              active ? "bg-primary" : "bg-transparent",
-                            ].join(" ")}
-                          />
+                          {t.label}
                         </button>
                       );
                     })}
                   </div>
-
-                  <div className="max-h-[60vh] overflow-auto pr-xs">
-                    <p className="text-body text-ink whitespace-pre-line">{activeSummary}</p>
-                  </div>
+                  <MarketingScrollReveal className="max-h-[60vh] overflow-auto rounded-xl border border-white/5 bg-zinc-900/50 p-4 pr-2 transition-colors hover:border-white/10">
+                    <p className="whitespace-pre-line text-sm leading-relaxed text-zinc-300">{activeSummary}</p>
+                  </MarketingScrollReveal>
                 </div>
               ) : null}
 
               {rightTab === "flashcards" ? (
-                <div className="flex flex-col gap-lg">
-                  <p className="text-caption text-marketing-muted text-center">
+                <div className="flex flex-col gap-6">
+                  <p className="text-center text-xs text-zinc-500">
                     Card {cardIndex + 1} of {session.flashcards.length}
                   </p>
 
-                  <div
-                    className="w-full"
-                    style={{ perspective: "1000px" }}
-                  >
+                  <div className="w-full" style={{ perspective: "1000px" }}>
                     <button
                       type="button"
                       onClick={() => setIsCardFlipped((v) => !v)}
-                      className="relative w-full min-h-[260px] rounded-linear border border-marketing-divider bg-canvas text-left transition duration-interaction ease-out hover:border-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-canvas"
+                      className="relative min-h-[260px] w-full rounded-2xl border border-white/5 bg-zinc-900/50 p-6 text-left transition-colors hover:border-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#5e6ad2] focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-950"
                     >
                       <div
                         className={[
-                          "absolute inset-0 p-lg motion-safe:transition-transform motion-safe:duration-[400ms] motion-safe:ease-out motion-reduce:transition-none",
+                          "absolute inset-0 p-6 motion-safe:transition-transform motion-safe:duration-[400ms] motion-safe:ease-out motion-reduce:transition-none",
                           isCardFlipped ? "motion-safe:[transform:rotateY(180deg)]" : "motion-safe:[transform:rotateY(0deg)]",
                         ].join(" ")}
                         style={{ transformStyle: "preserve-3d" }}
                       >
-                        {/* Front */}
                         <div
-                          className="absolute inset-0 flex items-center justify-center p-lg"
+                          className="absolute inset-0 flex items-center justify-center p-6"
                           style={{ backfaceVisibility: "hidden" }}
                         >
-                          <p className="text-[18px] font-semibold tracking-tight text-ink text-center">
+                          <p className="text-center text-lg font-semibold tracking-tight text-white">
                             {session.flashcards[cardIndex]?.question}
                           </p>
                         </div>
-
-                        {/* Back */}
                         <div
-                          className="absolute inset-0 flex flex-col justify-between p-lg"
+                          className="absolute inset-0 flex flex-col justify-between p-6"
                           style={{ backfaceVisibility: "hidden", transform: "rotateY(180deg)" }}
                         >
-                          <p className="text-body text-ink whitespace-pre-line">
-                            {session.flashcards[cardIndex]?.answer}
-                          </p>
-                          <p className="mt-lg font-mono text-[12px] tabular-nums text-primary">
+                          <p className="whitespace-pre-line text-sm text-zinc-300">{session.flashcards[cardIndex]?.answer}</p>
+                          <p className="mt-4 font-mono text-xs tabular-nums text-[#5e6ad2]">
                             Source: {formatTimestamp(session.flashcards[cardIndex]?.source_timestamp ?? 0)}
                           </p>
                         </div>
@@ -635,12 +551,12 @@ export default function StudyPage(): JSX.Element {
                     </button>
                   </div>
 
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between text-sm">
                     <button
                       type="button"
                       disabled={cardIndex === 0}
                       onClick={() => setCardIndex((i) => Math.max(0, i - 1))}
-                      className="text-button text-marketing-muted transition duration-interaction ease-out hover:text-ink disabled:cursor-not-allowed disabled:opacity-50"
+                      className="text-zinc-400 transition-colors hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       ← Previous
                     </button>
@@ -648,7 +564,7 @@ export default function StudyPage(): JSX.Element {
                       type="button"
                       disabled={cardIndex >= session.flashcards.length - 1}
                       onClick={() => setCardIndex((i) => Math.min(session.flashcards.length - 1, i + 1))}
-                      className="text-button text-marketing-muted transition duration-interaction ease-out hover:text-ink disabled:cursor-not-allowed disabled:opacity-50"
+                      className="text-zinc-400 transition-colors hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       Next →
                     </button>
@@ -657,12 +573,12 @@ export default function StudyPage(): JSX.Element {
               ) : null}
 
               {rightTab === "search" ? (
-                <div className="flex flex-col gap-lg">
+                <div className="flex flex-col gap-6">
                   {!session.indexed ? (
-                    <p className="text-secondary text-marketing-muted">Search is not available for this lecture.</p>
+                    <p className="text-sm text-zinc-500">Search is not available for this lecture.</p>
                   ) : (
                     <>
-                      <div className="flex items-center gap-sm">
+                      <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                         <input
                           value={searchQuery}
                           onChange={(e) => setSearchQuery(e.target.value)}
@@ -673,12 +589,12 @@ export default function StudyPage(): JSX.Element {
                             }
                           }}
                           placeholder="Ask anything about this lecture..."
-                          className="min-h-[44px] flex-1 rounded-linear border border-marketing-divider bg-surface-1 px-sm py-xs text-body text-ink outline-none transition duration-interaction ease-out placeholder:text-ink-tertiary focus:border-primary-focus focus:shadow-focus-glow"
+                          className="min-h-[44px] flex-1 rounded-lg border border-white/10 bg-zinc-900 px-3 py-2 text-sm text-white outline-none transition-colors placeholder:text-zinc-500 focus:border-[#5e6ad2]/60 focus:ring-1 focus:ring-[#5e6ad2]"
                         />
                         <button
                           type="button"
                           onClick={() => runSearch()}
-                          className="min-h-[44px] rounded-linear bg-primary px-[14px] py-[8px] text-button font-medium text-onprimary transition duration-interaction ease-out hover:bg-primary-hover active:bg-primary-focus disabled:cursor-not-allowed disabled:opacity-60"
+                          className="min-h-[44px] shrink-0 rounded-full bg-[#5e6ad2] px-5 py-2 text-sm font-medium text-white transition-colors hover:bg-[#4f5ec0] disabled:cursor-not-allowed disabled:opacity-60"
                           disabled={isSearching}
                         >
                           Search
@@ -686,46 +602,42 @@ export default function StudyPage(): JSX.Element {
                       </div>
 
                       {language !== "en" ? (
-                        <p className="text-caption text-marketing-muted">
+                        <p className="text-xs text-zinc-500">
                           Search works best in English. You can type your question in English to find relevant moments.
                         </p>
                       ) : null}
 
                       {isSearching ? (
-                        <p className="text-secondary text-marketing-muted motion-safe:animate-pulse motion-reduce:animate-none">
-                          Searching…
-                        </p>
+                        <p className="text-sm text-zinc-500 motion-safe:animate-pulse motion-reduce:animate-none">Searching…</p>
                       ) : null}
 
-                      {searchError ? (
-                        <p className="text-secondary text-[#d16a6a]">{searchError}</p>
-                      ) : null}
+                      {searchError ? <p className="text-sm text-[#e53e3e]">{searchError}</p> : null}
 
                       {searchResults.length > 0 ? (
-                        <ul className="divide-y divide-marketing-divider">
-                          {searchResults.slice(0, 3).map((r, idx) => {
-                            const pct = Math.round(Math.max(0, Math.min(1, r.relevance_score)) * 100);
-                            return (
-                              <li
-                                key={`${r.chunk_index}-${r.start}`}
-                                className="py-md"
-                                style={{
-                                  transitionDelay: `${idx * 50}ms`,
-                                }}
-                              >
-                                <p className="text-caption text-marketing-muted">Match: {pct}%</p>
-                                <p className="mt-xs text-secondary text-ink">{r.text}</p>
-                                <button
-                                  type="button"
-                                  onClick={() => seekTo(r.start)}
-                                  className="mt-sm font-mono text-[12px] tabular-nums text-primary transition duration-interaction ease-out hover:text-primary-hover"
+                        <MarketingScrollReveal>
+                          <ul className="divide-y divide-white/5 rounded-xl border border-white/5 bg-zinc-900/50 transition-colors hover:border-white/10">
+                            {searchResults.slice(0, 3).map((r, idx) => {
+                              const pct = Math.round(Math.max(0, Math.min(1, r.relevance_score)) * 100);
+                              return (
+                                <li
+                                  key={`${r.chunk_index}-${r.start}`}
+                                  className="p-4"
+                                  style={{ transitionDelay: `${idx * 50}ms` }}
                                 >
-                                  {formatTimestamp(r.start)}
-                                </button>
-                              </li>
-                            );
-                          })}
-                        </ul>
+                                  <p className="text-xs text-zinc-500">Match: {pct}%</p>
+                                  <p className="mt-1 text-sm text-zinc-300">{r.text}</p>
+                                  <button
+                                    type="button"
+                                    onClick={() => seekTo(r.start)}
+                                    className="mt-2 font-mono text-xs tabular-nums text-[#5e6ad2] transition-colors hover:text-white"
+                                  >
+                                    {formatTimestamp(r.start)}
+                                  </button>
+                                </li>
+                              );
+                            })}
+                          </ul>
+                        </MarketingScrollReveal>
                       ) : null}
                     </>
                   )}

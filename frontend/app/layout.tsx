@@ -8,14 +8,21 @@
  */
 
 import type { Metadata } from "next";
-import { Inter } from "next/font/google";
+import { Inter, Playfair_Display } from "next/font/google";
 import "./globals.css";
+import "./components/marketing/lumina.css";
 
 const inter = Inter({
   subsets: ["latin"],
   variable: "--font-inter",
   display: "swap",
   weight: ["400", "500", "600", "700"],
+});
+
+const playfair = Playfair_Display({
+  subsets: ["latin"],
+  variable: "--font-lecturekit-serif",
+  display: "swap",
 });
 
 export const metadata: Metadata = {
@@ -37,12 +44,9 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body
-        className={`${inter.variable} font-sans antialiased`}
+        className={`${inter.variable} ${playfair.variable} min-h-screen bg-zinc-950 font-sans text-zinc-200 antialiased`}
         style={{
           margin: 0,
-          minHeight: "100vh",
-          backgroundColor: "#010102",
-          color: "#f7f8f8",
           fontFamily:
             "var(--font-inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif)",
         }}
