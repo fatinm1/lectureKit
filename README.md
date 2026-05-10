@@ -111,17 +111,17 @@ Agent 1: Transcript Agent ◄── Supadata API / yt-dlp
    Agent 2    Agent 3     Agent 5/6
    Content    Search      Faculty / Provost
   (Claude) (MiniLM+ChromaDB) (Claude)
-      │       │         │
-      └───┬───┘         │
-          │             │
-          ▼             ▼
-    localStorage   localStorage
-          │             │
-          ▼             ▼
-       /study   /report or /curriculum
-          │             │
-          ▼             ▼
-   YouTube iframe     YouTube iframe
+      │       │               │
+      └───┬───┘               │
+          │                   │
+          ▼                   ▼
+    localStorage        localStorage
+          │                   │
+          ▼                   ▼
+       /study        /report or /curriculum
+          │                   │
+          ▼                   ▼
+   YouTube iframe       YouTube iframe
    (seekTo via postMessage)
 ```
 
