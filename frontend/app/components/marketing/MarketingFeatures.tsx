@@ -102,25 +102,6 @@ export function MarketingFeatures(): JSX.Element {
               </div>
             </div>
             <div className="relative z-10 mt-auto">
-              <div className="mb-4 flex -space-x-2">
-                <img
-                  className="h-8 w-8 rounded-full border-2 border-zinc-900"
-                  src="https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=64&h=64"
-                  alt=""
-                  width={32}
-                  height={32}
-                />
-                <img
-                  className="h-8 w-8 rounded-full border-2 border-zinc-900"
-                  src="https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=64&h=64"
-                  alt=""
-                  width={32}
-                  height={32}
-                />
-                <div className="flex h-8 w-8 items-center justify-center rounded-full border-2 border-zinc-900 bg-zinc-800 text-[10px] text-white">
-                  +5
-                </div>
-              </div>
               <h3 className="mb-1 font-lk-serif text-xl text-white">Provost</h3>
               <p className="text-sm text-zinc-400">
                 Paste multiple lecture URLs and your learning objectives. See which objectives were covered, which were
