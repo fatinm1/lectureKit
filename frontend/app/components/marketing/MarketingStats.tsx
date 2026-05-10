@@ -4,14 +4,6 @@
 
 import { MarketingScrollReveal } from "./MarketingScrollReveal";
 
-function StarIcon(): JSX.Element {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="#eab308" aria-hidden>
-      <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
-    </svg>
-  );
-}
-
 export function MarketingStats(): JSX.Element {
   return (
     <section className="bg-zinc-950 py-24" aria-labelledby="stats-title">
@@ -36,16 +28,13 @@ export function MarketingStats(): JSX.Element {
               <div className="mt-8 mx-auto h-px w-24 bg-gradient-to-r from-transparent via-zinc-500/50 to-transparent" />
             </div>
 
-            <div className="flex h-full flex-col justify-center rounded-3xl border border-white/5 bg-zinc-900/30 p-8">
-              <div className="mb-4 text-4xl text-zinc-700">&ldquo;</div>
-              <p className="mb-6 text-xl font-light italic text-zinc-200">
-                LectureKit found the exact moment in the lecture that answered my question. Not keyword matching —
-                actual semantic similarity.
+            <div className="rounded-3xl border border-white/5 bg-zinc-900/30 p-8">
+              <div className="mb-2 font-lk-serif text-5xl text-white">5</div>
+              <p className="text-sm text-zinc-500">
+                Languages supported — English, Spanish, French, Bengali, and Arabic
               </p>
-              <div className="flex gap-1">
-                {Array.from({ length: 5 }).map((_, i) => (
-                  <StarIcon key={i} />
-                ))}
+              <div className="mt-8 h-1 w-full overflow-hidden rounded-full bg-zinc-800">
+                <div className="h-full w-full rounded-full bg-zinc-400" />
               </div>
             </div>
           </div>
