@@ -1,0 +1,727 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>LectureKit — Architecture Diagram</title>
+    <style>
+      :root {
+        --bg: #07070a;
+        --panel: rgba(20, 20, 26, 0.75);
+        --panel2: rgba(14, 14, 18, 0.8);
+        --border: rgba(255, 255, 255, 0.08);
+        --muted: #a1a1aa;
+        --text: #e4e4e7;
+        --purple: #5e6ad2;
+        --green: #1d9e75;
+        --amber: #ba7517;
+        --red: #e53e3e;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+        background: radial-gradient(1200px 600px at 50% 0%, rgba(94, 106, 210, 0.16), transparent 55%),
+          radial-gradient(900px 420px at 15% 10%, rgba(29, 158, 117, 0.12), transparent 50%),
+          radial-gradient(900px 420px at 85% 15%, rgba(186, 117, 23, 0.10), transparent 55%),
+          var(--bg);
+        color: var(--text);
+        font-family: ui-monospace, "JetBrains Mono", SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New",
+          monospace;
+      }
+
+      a {
+        color: inherit;
+      }
+
+      .topbar {
+        position: sticky;
+        top: 0;
+        z-index: 20;
+        border-bottom: 1px solid var(--border);
+        background: rgba(10, 10, 12, 0.8);
+        backdrop-filter: blur(10px);
+      }
+
+      .topbar-inner {
+        max-width: 1400px;
+        margin: 0 auto;
+        padding: 14px 16px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+
+      .brand {
+        display: flex;
+        align-items: baseline;
+        gap: 10px;
+        min-width: 0;
+      }
+      .brand .title {
+        font-weight: 700;
+        letter-spacing: -0.02em;
+      }
+      .brand .subtitle {
+        color: var(--muted);
+        font-size: 12px;
+        white-space: nowrap;
+      }
+
+      .controls {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+      }
+
+      .btn {
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        background: transparent;
+        color: var(--text);
+        padding: 7px 12px;
+        border-radius: 999px;
+        font-size: 12px;
+        cursor: pointer;
+        transition: background 120ms ease, border-color 120ms ease, transform 120ms ease;
+        user-select: none;
+      }
+      .btn:hover {
+        background: rgba(255, 255, 255, 0.05);
+        border-color: rgba(255, 255, 255, 0.24);
+      }
+      .btn:active {
+        transform: translateY(1px);
+      }
+
+      .hint {
+        font-size: 12px;
+        color: var(--muted);
+      }
+
+      .stage {
+        height: calc(100vh - 52px);
+        padding: 16px;
+      }
+
+      .viewport {
+        height: 100%;
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        background: rgba(7, 7, 10, 0.65);
+        overflow: hidden;
+        position: relative;
+      }
+
+      .canvas {
+        position: absolute;
+        inset: 0;
+        transform-origin: 0 0;
+        cursor: grab;
+      }
+      .canvas.grabbing {
+        cursor: grabbing;
+      }
+
+      /* Diagram layout */
+      .diagram {
+        width: 1600px;
+        height: 980px;
+        padding: 22px;
+      }
+
+      .row {
+        display: grid;
+        grid-template-columns: 1.05fr 1.25fr 1.05fr;
+        gap: 14px;
+      }
+
+      .section {
+        border: 1px solid var(--border);
+        border-radius: 16px;
+        padding: 14px;
+        background: var(--panel);
+        box-shadow: 0 18px 50px rgba(0, 0, 0, 0.55);
+      }
+
+      .section-header {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 10px;
+        margin-bottom: 10px;
+      }
+
+      .section-title {
+        font-size: 13px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .pill {
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        background: rgba(0, 0, 0, 0.25);
+        padding: 4px 8px;
+        border-radius: 999px;
+        font-size: 11px;
+        color: var(--muted);
+        white-space: nowrap;
+      }
+
+      .stack {
+        display: grid;
+        gap: 10px;
+      }
+
+      .node {
+        border: 1px solid rgba(255, 255, 255, 0.10);
+        background: var(--panel2);
+        border-radius: 14px;
+        padding: 10px 12px;
+        position: relative;
+      }
+      .node:hover {
+        border-color: rgba(255, 255, 255, 0.20);
+      }
+
+      .node .name {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        font-weight: 700;
+        font-size: 13px;
+      }
+      .node .desc {
+        margin-top: 6px;
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.45;
+      }
+
+      .tag {
+        font-size: 11px;
+        border-radius: 999px;
+        padding: 3px 8px;
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        color: var(--muted);
+      }
+      .tag.purple {
+        border-color: rgba(94, 106, 210, 0.55);
+        color: #c9cdfa;
+      }
+      .tag.green {
+        border-color: rgba(29, 158, 117, 0.55);
+        color: #b7f3e0;
+      }
+      .tag.amber {
+        border-color: rgba(186, 117, 23, 0.60);
+        color: #ffd6a0;
+      }
+
+      .cols {
+        display: grid;
+        grid-template-columns: 1fr 1fr 1fr;
+        gap: 12px;
+      }
+
+      .mode {
+        border: 1px solid var(--border);
+        border-radius: 16px;
+        background: rgba(10, 10, 12, 0.45);
+        padding: 12px;
+        position: relative;
+      }
+      .mode.student {
+        outline: 1px solid rgba(94, 106, 210, 0.25);
+      }
+      .mode.faculty {
+        outline: 1px solid rgba(29, 158, 117, 0.25);
+      }
+      .mode.provost {
+        outline: 1px solid rgba(186, 117, 23, 0.25);
+      }
+
+      .mode-title {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        margin-bottom: 10px;
+      }
+      .mode-title .label {
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        font-size: 12px;
+      }
+      .mode-title .endpoint {
+        font-size: 11px;
+        color: var(--muted);
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        border-radius: 999px;
+        padding: 3px 8px;
+        background: rgba(0, 0, 0, 0.25);
+        white-space: nowrap;
+      }
+
+      .divider {
+        height: 1px;
+        background: rgba(255, 255, 255, 0.08);
+        margin: 12px 0;
+      }
+
+      .foot {
+        margin-top: 12px;
+        display: grid;
+        grid-template-columns: 1.2fr 1.8fr;
+        gap: 14px;
+      }
+
+      .legend {
+        display: grid;
+        gap: 8px;
+      }
+      .legend .item {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-size: 12px;
+        color: var(--muted);
+      }
+      .dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.18);
+        border: 1px solid rgba(255, 255, 255, 0.16);
+      }
+      .dot.purple {
+        background: rgba(94, 106, 210, 0.5);
+        border-color: rgba(94, 106, 210, 0.7);
+      }
+      .dot.green {
+        background: rgba(29, 158, 117, 0.5);
+        border-color: rgba(29, 158, 117, 0.7);
+      }
+      .dot.amber {
+        background: rgba(186, 117, 23, 0.55);
+        border-color: rgba(186, 117, 23, 0.75);
+      }
+
+      .kvs {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+      }
+
+      .kv {
+        border: 1px solid rgba(255, 255, 255, 0.10);
+        border-radius: 14px;
+        background: rgba(0, 0, 0, 0.22);
+        padding: 10px 12px;
+      }
+      .kv .k {
+        font-size: 11px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+      .kv .v {
+        margin-top: 6px;
+        font-size: 12px;
+        line-height: 1.4;
+      }
+      .mono {
+        font-family: inherit;
+        font-size: 12px;
+        color: #d4d4d8;
+      }
+
+      /* Simple hover tooltips */
+      [data-tip] {
+        position: relative;
+      }
+      [data-tip]:hover::after {
+        content: attr(data-tip);
+        position: absolute;
+        left: 0;
+        top: calc(100% + 8px);
+        z-index: 30;
+        width: min(420px, 70vw);
+        padding: 10px 12px;
+        border-radius: 12px;
+        background: rgba(0, 0, 0, 0.75);
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        color: #e4e4e7;
+        font-size: 12px;
+        line-height: 1.35;
+        box-shadow: 0 18px 60px rgba(0, 0, 0, 0.55);
+        white-space: pre-wrap;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="topbar">
+      <div class="topbar-inner">
+        <div class="brand">
+          <div class="title">LectureKit</div>
+          <div class="subtitle">Architecture (interactive)</div>
+        </div>
+        <div class="controls">
+          <button class="btn" id="zoomOut" type="button">−</button>
+          <button class="btn" id="zoomReset" type="button">Reset</button>
+          <button class="btn" id="zoomIn" type="button">+</button>
+          <span class="hint">Drag to pan • Scroll to zoom</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="stage">
+      <div class="viewport" id="viewport">
+        <div class="canvas" id="canvas">
+          <div class="diagram">
+            <div class="row">
+              <div class="section">
+                <div class="section-header">
+                  <div class="section-title">Frontend (Next.js)</div>
+                  <div class="pill">App Router • Tailwind</div>
+                </div>
+                <div class="stack">
+                  <div
+                    class="node"
+                    data-tip="Landing: Marketing + mode selection.\nRoutes:\n- / (Marketing)\n- /app (Workspace)\n- /study, /report, /curriculum, /diagram"
+                  >
+                    <div class="name">
+                      <span>Marketing + Workspace UI</span>
+                      <span class="tag purple">Next.js</span>
+                    </div>
+                    <div class="desc">
+                      Mode CTA → <span class="mono">/app?mode=student|faculty|provost</span>.<br />
+                      Study, Faculty Report, Curriculum Map read from session.
+                    </div>
+                  </div>
+
+                  <div
+                    class="node"
+                    data-tip="Sessions are persisted to localStorage per mode.\nStudent: lecturekit_session\nFaculty: lecturekit_faculty_session\nProvost: lecturekit_provost_session (includes failed_urls)"
+                  >
+                    <div class="name">
+                      <span>localStorage Sessions</span>
+                      <span class="tag">Browser</span>
+                    </div>
+                    <div class="desc">
+                      Cached results + continuity across pages.<br />
+                      Provost banner surfaces <span class="mono">failed_urls[]</span>.
+                    </div>
+                  </div>
+
+                  <div
+                    class="node"
+                    data-tip="Client posts to FastAPI.\nStudent: POST /process\nFaculty: POST /faculty\nProvost: POST /provost"
+                  >
+                    <div class="name">
+                      <span>API Calls</span>
+                      <span class="tag">fetch</span>
+                    </div>
+                    <div class="desc">Structured JSON responses stored in sessions.</div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="section">
+                <div class="section-header">
+                  <div class="section-title">Backend (FastAPI)</div>
+                  <div class="pill">Orchestrates agents + storage</div>
+                </div>
+
+                <div class="cols">
+                  <div class="mode student">
+                    <div class="mode-title">
+                      <div class="label">Student Mode</div>
+                      <div class="endpoint">POST /process</div>
+                    </div>
+                    <div class="stack">
+                      <div class="node" data-tip="Downloads transcript + chunks content for embedding/LLM use.">
+                        <div class="name">
+                          <span>Ingest Agent</span>
+                          <span class="tag purple">agent</span>
+                        </div>
+                        <div class="desc">Transcript → chunks → embeddings.</div>
+                      </div>
+                      <div class="node" data-tip="Creates hierarchical outlines and summaries for study view.">
+                        <div class="name">
+                          <span>Content Agent</span>
+                          <span class="tag purple">agent</span>
+                        </div>
+                        <div class="desc">Outline + multi-length summaries.</div>
+                      </div>
+                      <div class="node" data-tip="Generates flashcards for fast review.">
+                        <div class="name">
+                          <span>Flashcard Agent</span>
+                          <span class="tag purple">agent</span>
+                        </div>
+                        <div class="desc">Q/A cards + key concepts.</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="mode faculty">
+                    <div class="mode-title">
+                      <div class="label">Faculty Mode</div>
+                      <div class="endpoint">POST /faculty</div>
+                    </div>
+                    <div class="stack">
+                      <div class="node" data-tip="Evaluates pedagogical quality + clarity vs learning goals.">
+                        <div class="name">
+                          <span>Teaching Quality Agent</span>
+                          <span class="tag green">agent</span>
+                        </div>
+                        <div class="desc">Rubric-based critique + improvements.</div>
+                      </div>
+                      <div class="node" data-tip="Cross-checks content organization + pacing + suggestions.">
+                        <div class="name">
+                          <span>Feedback Agent</span>
+                          <span class="tag green">agent</span>
+                        </div>
+                        <div class="desc">Actionable recommendations.</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="mode provost">
+                    <div class="mode-title">
+                      <div class="label">Provost Mode</div>
+                      <div class="endpoint">POST /provost</div>
+                    </div>
+                    <div class="stack">
+                      <div
+                        class="node"
+                        data-tip="Processes multiple URLs, aggregates objective coverage.\nReturns curriculum_map + lecture_count + video_ids + failed_urls."
+                      >
+                        <div class="name">
+                          <span>Curriculum Agent</span>
+                          <span class="tag amber">agent</span>
+                        </div>
+                        <div class="desc">Objective coverage map + exec summary.</div>
+                      </div>
+                      <div class="node" data-tip="Captures failures per URL in failed_urls[] to keep map usable.">
+                        <div class="name">
+                          <span>Failure Handler</span>
+                          <span class="tag amber">resilience</span>
+                        </div>
+                        <div class="desc">Partial success + transparency.</div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="divider"></div>
+
+                <div class="kvs">
+                  <div class="kv" data-tip="Vector store for embeddings + retrieval.\nUsed for semantic search / evidence lookup.">
+                    <div class="k">Vector Store</div>
+                    <div class="v"><span class="mono">Chroma</span> (local) / persisted volume</div>
+                  </div>
+                  <div class="kv" data-tip="Server-side caching for processed content keyed by video id.">
+                    <div class="k">Caching</div>
+                    <div class="v">Avoid reprocessing identical lectures</div>
+                  </div>
+                  <div class="kv" data-tip="FastAPI route layer, validation, orchestration.">
+                    <div class="k">API Layer</div>
+                    <div class="v"><span class="mono">FastAPI</span> + async orchestration</div>
+                  </div>
+                  <div class="kv" data-tip="LLM calls happen inside agents to generate structured outputs.">
+                    <div class="k">LLM Orchestration</div>
+                    <div class="v">Agent prompts + typed outputs</div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="section">
+                <div class="section-header">
+                  <div class="section-title">External Services</div>
+                  <div class="pill">Inputs + model providers</div>
+                </div>
+                <div class="stack">
+                  <div class="node" data-tip="Primary content source: transcript + metadata.">
+                    <div class="name">
+                      <span>YouTube</span>
+                      <span class="tag">source</span>
+                    </div>
+                    <div class="desc">URLs → video ids → transcripts.</div>
+                  </div>
+                  <div class="node" data-tip="LLM provider used by agents (summaries, rubrics, curriculum map).">
+                    <div class="name">
+                      <span>LLM Provider</span>
+                      <span class="tag">API</span>
+                    </div>
+                    <div class="desc">Structured JSON outputs (agent tools / schemas).</div>
+                  </div>
+                  <div class="node" data-tip="Optional: embeddings provider used for vector search quality.">
+                    <div class="name">
+                      <span>Embeddings</span>
+                      <span class="tag">API</span>
+                    </div>
+                    <div class="desc">Chunk embeddings for semantic search.</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="foot">
+              <div class="section">
+                <div class="section-header">
+                  <div class="section-title">Legend</div>
+                  <div class="pill">Hover boxes for details</div>
+                </div>
+                <div class="legend">
+                  <div class="item">
+                    <span class="dot purple"></span> Student mode agents (summaries, flashcards, study)
+                  </div>
+                  <div class="item">
+                    <span class="dot green"></span> Faculty mode agents (teaching quality + feedback)
+                  </div>
+                  <div class="item">
+                    <span class="dot amber"></span> Provost mode agents (curriculum map + failed_urls)
+                  </div>
+                  <div class="item">
+                    <span class="dot"></span> Shared infra (API, Chroma, caching, localStorage)
+                  </div>
+                </div>
+              </div>
+
+              <div class="section">
+                <div class="section-header">
+                  <div class="section-title">Data Flow (at a glance)</div>
+                  <div class="pill">end-to-end</div>
+                </div>
+                <div class="stack">
+                  <div class="node">
+                    <div class="name">
+                      <span>1) User selects mode</span>
+                      <span class="tag">/app</span>
+                    </div>
+                    <div class="desc">Student: 1 URL • Faculty: 1 URL • Provost: multiple URLs + objectives.</div>
+                  </div>
+                  <div class="node">
+                    <div class="name">
+                      <span>2) Backend processes</span>
+                      <span class="tag">FastAPI</span>
+                    </div>
+                    <div class="desc">
+                      Agents call external services → produce structured responses. Provost can partially succeed and returns
+                      <span class="mono">failed_urls[]</span>.
+                    </div>
+                  </div>
+                  <div class="node">
+                    <div class="name">
+                      <span>3) Frontend persists + renders</span>
+                      <span class="tag">localStorage</span>
+                    </div>
+                    <div class="desc">Session cached → Study / Report / Curriculum pages render instantly.</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      (function () {
+        const viewport = document.getElementById("viewport");
+        const canvas = document.getElementById("canvas");
+        const zoomIn = document.getElementById("zoomIn");
+        const zoomOut = document.getElementById("zoomOut");
+        const zoomReset = document.getElementById("zoomReset");
+
+        let scale = 0.85;
+        let x = 20;
+        let y = 20;
+        let dragging = false;
+        let lastX = 0;
+        let lastY = 0;
+
+        function apply() {
+          canvas.style.transform = `translate(${x}px, ${y}px) scale(${scale})`;
+        }
+
+        function clampScale(next) {
+          return Math.max(0.35, Math.min(1.75, next));
+        }
+
+        function zoomAt(clientX, clientY, delta) {
+          const rect = viewport.getBoundingClientRect();
+          const cx = clientX - rect.left;
+          const cy = clientY - rect.top;
+
+          const prev = scale;
+          const next = clampScale(scale * (delta > 0 ? 1.08 : 0.92));
+          if (next === prev) return;
+
+          const wx = (cx - x) / prev;
+          const wy = (cy - y) / prev;
+
+          scale = next;
+          x = cx - wx * scale;
+          y = cy - wy * scale;
+          apply();
+        }
+
+        viewport.addEventListener(
+          "wheel",
+          (e) => {
+            e.preventDefault();
+            zoomAt(e.clientX, e.clientY, -e.deltaY);
+          },
+          { passive: false }
+        );
+
+        viewport.addEventListener("mousedown", (e) => {
+          dragging = true;
+          canvas.classList.add("grabbing");
+          lastX = e.clientX;
+          lastY = e.clientY;
+        });
+
+        window.addEventListener("mousemove", (e) => {
+          if (!dragging) return;
+          const dx = e.clientX - lastX;
+          const dy = e.clientY - lastY;
+          lastX = e.clientX;
+          lastY = e.clientY;
+          x += dx;
+          y += dy;
+          apply();
+        });
+
+        window.addEventListener("mouseup", () => {
+          dragging = false;
+          canvas.classList.remove("grabbing");
+        });
+
+        zoomIn.addEventListener("click", () => zoomAt(viewport.getBoundingClientRect().left + 80, viewport.getBoundingClientRect().top + 80, 1));
+        zoomOut.addEventListener("click", () => zoomAt(viewport.getBoundingClientRect().left + 80, viewport.getBoundingClientRect().top + 80, -1));
+        zoomReset.addEventListener("click", () => {
+          scale = 0.85;
+          x = 20;
+          y = 20;
+          apply();
+        });
+
+        apply();
+      })();
+    </script>
+  </body>
+</html>
+
