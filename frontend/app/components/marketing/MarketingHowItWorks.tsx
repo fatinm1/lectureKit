@@ -36,14 +36,18 @@ export function MarketingHowItWorks(): JSX.Element {
 
           {/* Card 2: Select role */}
           <MarketingScrollReveal className="group relative overflow-hidden rounded-3xl border border-white/5 bg-zinc-900/30 p-8">
-            <div className="mb-6 flex gap-4">
-              <div className="flex-1 transform rounded-xl border border-white/10 bg-zinc-950 p-4 shadow-xl transition-transform duration-500 delay-75 group-hover:-translate-y-1">
+            <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-3 sm:gap-2 md:gap-3">
+              <div className="transform rounded-xl border border-white/10 bg-zinc-950 p-3 shadow-xl transition-transform duration-500 delay-75 group-hover:-translate-y-1 sm:p-4">
                 <div className="mb-2 text-xs font-medium text-zinc-400">Student</div>
                 <div className="text-[10px] text-zinc-500">Study kit &amp; search</div>
               </div>
-              <div className="flex-1 transform rounded-xl border border-white/10 bg-zinc-950 p-4 shadow-xl transition-transform duration-500 group-hover:-translate-y-1">
+              <div className="transform rounded-xl border border-white/10 bg-zinc-950 p-3 shadow-xl transition-transform duration-500 group-hover:-translate-y-1 sm:p-4">
                 <div className="mb-2 text-xs font-medium text-zinc-300">Faculty</div>
                 <div className="text-[10px] text-zinc-500">Private audit</div>
+              </div>
+              <div className="transform rounded-xl border border-white/10 bg-zinc-950 p-3 shadow-xl transition-transform duration-500 delay-150 group-hover:-translate-y-1 sm:p-4">
+                <div className="mb-2 text-xs font-medium text-zinc-300">Provost</div>
+                <div className="text-[10px] text-zinc-500">Curriculum map</div>
               </div>
             </div>
             <h3 className="mb-1 font-lk-serif text-xl text-white">Select your role</h3>

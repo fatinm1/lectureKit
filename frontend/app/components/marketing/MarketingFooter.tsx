@@ -7,25 +7,6 @@ import { MarketingScrollReveal } from "./MarketingScrollReveal";
 
 const GITHUB = "https://github.com/fatinm1/lectureKit";
 
-function SparklesIcon(): JSX.Element {
-  return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      width="12"
-      height="12"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="black"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden
-    >
-      <path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z" />
-    </svg>
-  );
-}
-
 export function MarketingFooter(): JSX.Element {
   return (
     <footer className="relative overflow-hidden bg-zinc-950 pt-20 pb-10">
@@ -64,10 +45,7 @@ export function MarketingFooter(): JSX.Element {
 
       <div className="mx-auto grid max-w-7xl grid-cols-2 gap-8 border-t border-white/5 px-6 pt-12 md:grid-cols-4">
         <div className="col-span-2 md:col-span-1">
-          <div className="mb-4 flex items-center gap-2">
-            <div className="flex h-6 w-6 items-center justify-center rounded-full bg-zinc-100">
-              <SparklesIcon />
-            </div>
+          <div className="mb-4">
             <span className="font-lk-serif tracking-tight text-white">LectureKit</span>
           </div>
           <p className="text-xs text-zinc-500">
