@@ -180,7 +180,7 @@ export default function CurriculumPage() {
             {curriculum_map.recommendations.map((rec, i) => (
               <MarketingScrollReveal key={i}>
                 <div className="flex gap-4 rounded-xl border border-white/5 bg-zinc-900/50 p-4 transition-colors hover:border-white/10">
-                  <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[#5e6ad2] text-xs font-bold text-white">
+                  <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-zinc-700 bg-zinc-800 text-xs font-bold text-white">
                     {rec.priority}
                   </div>
                   <div className="min-w-0">
@@ -203,7 +203,7 @@ export default function CurriculumPage() {
                   href={`https://www.youtube.com/watch?v=${id}`}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="rounded-full bg-zinc-950 px-2 py-1 font-mono text-xs text-[#5e6ad2] transition-colors hover:text-white"
+                  className="rounded-full bg-zinc-950 px-2 py-1 font-mono text-xs text-zinc-400 underline-offset-2 transition-colors hover:text-white hover:underline"
                 >
                   Lecture {i + 1}: {id}
                 </a>

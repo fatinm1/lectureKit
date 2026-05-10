@@ -50,9 +50,13 @@ const LANGUAGE_OPTIONS: Array<{ code: LanguageCode; label: string; target: strin
   { code: "ar", label: "Arabic", target: "Arabic" },
 ];
 
-const PILL_ACTIVE = "bg-[#5e6ad2] text-white shadow-sm";
+const PILL_ACTIVE = "rounded-full bg-white px-4 py-2 text-sm font-medium text-black";
 const PILL_INACTIVE =
-  "border border-[#2a2a2a] text-zinc-400 hover:border-[#5e6ad2] hover:text-white transition-colors";
+  "rounded-full border border-zinc-800 px-4 py-2 text-sm font-medium text-zinc-400 transition-colors hover:border-zinc-600 hover:text-white";
+const BTN_PRIMARY =
+  "rounded-full bg-white px-6 py-2.5 text-sm font-medium text-black transition-colors hover:bg-zinc-200 disabled:cursor-not-allowed disabled:opacity-60";
+const TIMESTAMP_LINK =
+  "cursor-pointer text-zinc-400 underline-offset-2 transition-colors hover:text-white hover:underline";
 
 function formatProcessedAt(iso: string): string {
   const date = new Date(iso);
@@ -345,14 +349,14 @@ export default function StudyPage(): JSX.Element {
       {isTranslating ? (
         <span
           aria-label="Translating"
-          className="h-4 w-4 shrink-0 rounded-full border-2 border-white/10 border-t-[#5e6ad2] motion-safe:animate-spin motion-reduce:animate-none"
+          className="h-4 w-4 shrink-0 rounded-full border-2 border-white/10 border-t-white motion-safe:animate-spin motion-reduce:animate-none"
         />
       ) : null}
       <select
         aria-label="Language"
         value={language}
         onChange={(e) => translateTo(e.target.value as LanguageCode)}
-        className="h-9 rounded-lg border border-white/10 bg-zinc-900 px-3 text-sm text-white outline-none transition-colors focus:border-[#5e6ad2]/60"
+        className="h-9 rounded-full border border-zinc-800 bg-zinc-950 px-4 py-2 text-sm text-white outline-none transition-colors hover:border-zinc-600 focus:border-zinc-600"
       >
         {LANGUAGE_OPTIONS.map((opt) => (
           <option key={opt.code} value={opt.code}>
@@ -453,7 +457,7 @@ export default function StudyPage(): JSX.Element {
                       key={t.id}
                       type="button"
                       onClick={() => setSummaryDepth(t.id)}
-                      className={`rounded-full px-4 py-1.5 text-xs font-medium transition-colors ${active ? PILL_ACTIVE : `${PILL_INACTIVE}`}`}
+                      className={`transition-colors ${active ? PILL_ACTIVE : PILL_INACTIVE}`}
                     >
                       {t.label}
                     </button>
@@ -476,9 +480,7 @@ export default function StudyPage(): JSX.Element {
                       key={t.id}
                       type="button"
                       onClick={() => setRightTab(t.id)}
-                      className={`rounded-full px-4 py-1.5 text-sm font-medium transition-colors ${
-                        active ? PILL_ACTIVE : `${PILL_INACTIVE}`
-                      }`}
+                      className={`transition-colors ${active ? PILL_ACTIVE : PILL_INACTIVE}`}
                     >
                       {t.label}
                     </button>
@@ -498,7 +500,7 @@ export default function StudyPage(): JSX.Element {
                           key={t.id}
                           type="button"
                           onClick={() => setSummaryDepth(t.id)}
-                          className={`rounded-full px-4 py-1.5 text-xs font-medium transition-colors ${active ? PILL_ACTIVE : `${PILL_INACTIVE}`}`}
+                          className={`transition-colors ${active ? PILL_ACTIVE : PILL_INACTIVE}`}
                         >
                           {t.label}
                         </button>
@@ -594,7 +596,7 @@ export default function StudyPage(): JSX.Element {
                         <button
                           type="button"
                           onClick={() => runSearch()}
-                          className="min-h-[44px] shrink-0 rounded-full bg-[#5e6ad2] px-5 py-2 text-sm font-medium text-white transition-colors hover:bg-[#4f5ec0] disabled:cursor-not-allowed disabled:opacity-60"
+                          className={`${BTN_PRIMARY} min-h-[44px] shrink-0`}
                           disabled={isSearching}
                         >
                           Search
@@ -629,7 +631,7 @@ export default function StudyPage(): JSX.Element {
                                   <button
                                     type="button"
                                     onClick={() => seekTo(r.start)}
-                                    className="mt-2 font-mono text-xs tabular-nums text-[#5e6ad2] transition-colors hover:text-white"
+                                    className={`mt-2 font-mono text-xs tabular-nums ${TIMESTAMP_LINK}`}
                                   >
                                     {formatTimestamp(r.start)}
                                   </button>

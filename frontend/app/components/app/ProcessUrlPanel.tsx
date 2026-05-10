@@ -16,9 +16,12 @@ import type { FacultySession, LectureSession, ProvostSession } from "../../../ty
 const FEATURES = ["Instant Summaries", "Smart Flashcards", "Semantic Search"] as const;
 
 const BTN_PRIMARY =
-  "rounded-full bg-[#5e6ad2] px-5 py-2 text-sm font-medium text-white transition-colors hover:bg-[#4f5ec0] disabled:cursor-not-allowed disabled:opacity-60";
+  "rounded-full bg-white px-6 py-2.5 text-sm font-medium text-black transition-colors hover:bg-zinc-200 disabled:cursor-not-allowed disabled:opacity-60";
 const BTN_SECONDARY =
-  "rounded-full border border-[#2a2a2a] px-5 py-2 text-sm font-medium text-zinc-400 transition-colors hover:border-[#5e6ad2] hover:text-white";
+  "rounded-full border border-zinc-700 bg-transparent px-6 py-2.5 text-sm font-medium text-white transition-colors hover:bg-white/5";
+const MODE_ACTIVE = "rounded-full bg-white px-4 py-2 text-sm font-medium text-black";
+const MODE_INACTIVE =
+  "rounded-full border border-zinc-800 px-4 py-2 text-sm font-medium text-zinc-400 transition-colors hover:border-zinc-600 hover:text-white";
 const INPUT_BASE =
   "min-h-[44px] w-full rounded-lg border border-white/10 bg-zinc-900 px-3 py-2 text-sm text-white outline-none transition-colors placeholder:text-zinc-500 focus:border-[#5e6ad2]/60 focus:ring-1 focus:ring-[#5e6ad2]";
 
@@ -288,7 +291,7 @@ export function ProcessUrlPanel(): JSX.Element {
                 width: 8,
                 height: 8,
                 borderRadius: 9999,
-                backgroundColor: "#5e6ad2",
+                backgroundColor: "#fafafa",
               }}
             />
           ) : state === "complete" ? (
@@ -337,13 +340,13 @@ export function ProcessUrlPanel(): JSX.Element {
             className="mx-auto mt-10 flex w-full flex-col gap-6 transition-opacity duration-200"
           >
             <div className="flex flex-wrap justify-center gap-2">
-              <button type="button" onClick={() => setMode("student")} className={mode === "student" ? BTN_PRIMARY : BTN_SECONDARY}>
+              <button type="button" onClick={() => setMode("student")} className={mode === "student" ? MODE_ACTIVE : MODE_INACTIVE}>
                 Student
               </button>
-              <button type="button" onClick={() => setMode("faculty")} className={mode === "faculty" ? BTN_PRIMARY : BTN_SECONDARY}>
+              <button type="button" onClick={() => setMode("faculty")} className={mode === "faculty" ? MODE_ACTIVE : MODE_INACTIVE}>
                 Faculty
               </button>
-              <button type="button" onClick={() => setMode("provost")} className={mode === "provost" ? BTN_PRIMARY : BTN_SECONDARY}>
+              <button type="button" onClick={() => setMode("provost")} className={mode === "provost" ? MODE_ACTIVE : MODE_INACTIVE}>
                 Provost
               </button>
             </div>
@@ -373,7 +376,7 @@ export function ProcessUrlPanel(): JSX.Element {
                   className={`${INPUT_BASE} min-h-[120px] resize-y py-3`}
                 />
                 <div className="flex justify-center pt-2">
-                  <button type="submit" disabled={isSubmitting} className={`${BTN_PRIMARY} min-h-[44px] px-8`}>
+                  <button type="submit" disabled={isSubmitting} className={`${BTN_PRIMARY} min-h-[44px]`}>
                     {isSubmitting ? "Sending…" : "Generate Curriculum Map"}
                   </button>
                 </div>
@@ -421,7 +424,10 @@ export function ProcessUrlPanel(): JSX.Element {
 
             <p className="text-xs text-zinc-500">
               Prefer the story?{" "}
-              <Link href="/" className="text-[#5e6ad2] transition-colors hover:text-white">
+              <Link
+                href="/"
+                className="text-zinc-400 underline-offset-2 transition-colors hover:text-white hover:underline"
+              >
                 Back to landing
               </Link>
             </p>
@@ -440,11 +446,7 @@ export function ProcessUrlPanel(): JSX.Element {
                 <p className="text-sm text-[#e53e3e]" role="status">
                   {statusMessage}
                 </p>
-                <button
-                  type="button"
-                  onClick={() => resetToForm()}
-                  className="mt-4 text-sm font-medium text-zinc-400 transition-colors hover:text-white"
-                >
+                <button type="button" onClick={() => resetToForm()} className={`${BTN_SECONDARY} mt-4`}>
                   Retry
                 </button>
               </div>

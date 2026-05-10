@@ -85,7 +85,7 @@ export default function ReportPage() {
               <button
                 type="button"
                 onClick={() => seekTo(report.top_priority_fix.timestamp)}
-                className="cursor-pointer font-mono text-xs text-[#5e6ad2] transition-colors hover:text-white"
+                className="cursor-pointer font-mono text-xs tabular-nums text-zinc-400 underline-offset-2 transition-colors hover:text-white hover:underline"
               >
                 → {formatTimestamp(report.top_priority_fix.timestamp)}
               </button>
@@ -140,7 +140,7 @@ export default function ReportPage() {
                               <button
                                 type="button"
                                 onClick={() => seekTo(issue.timestamp)}
-                                className="whitespace-nowrap font-mono text-xs text-[#5e6ad2] transition-colors hover:text-white"
+                                className="whitespace-nowrap font-mono text-xs tabular-nums text-zinc-400 underline-offset-2 transition-colors hover:text-white hover:underline"
                               >
                                 {formatTimestamp(issue.timestamp)}
                               </button>
@@ -167,7 +167,7 @@ export default function ReportPage() {
               <div className="space-y-3">
                 {report.prioritized_fixes.map((fix, i) => (
                   <div key={i} className="flex gap-4 rounded-xl border border-white/5 bg-zinc-950/40 p-3">
-                    <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[#5e6ad2] text-xs font-bold text-white">
+                    <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-zinc-700 bg-zinc-800 text-xs font-bold text-white">
                       {fix.priority}
                     </div>
                     <div className="min-w-0 flex-1">
@@ -178,7 +178,7 @@ export default function ReportPage() {
                           <button
                             type="button"
                             onClick={() => seekTo(fix.timestamp)}
-                            className="font-mono text-xs text-[#5e6ad2] transition-colors hover:text-white"
+                            className="font-mono text-xs tabular-nums text-zinc-400 underline-offset-2 transition-colors hover:text-white hover:underline"
                           >
                             {formatTimestamp(fix.timestamp)}
                           </button>

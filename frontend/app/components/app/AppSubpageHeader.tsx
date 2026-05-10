@@ -22,7 +22,7 @@ export function AppSubpageHeader({ title, right }: AppSubpageHeaderProps): JSX.E
           <button
             type="button"
             onClick={() => router.push("/app")}
-            className="shrink-0 text-sm text-zinc-400 transition-colors hover:text-white"
+            className="shrink-0 rounded-full border border-zinc-700 bg-transparent px-6 py-2.5 text-sm font-medium text-white transition-colors hover:bg-white/5"
           >
             ← Back
           </button>
