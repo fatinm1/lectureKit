@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { AppSubpageHeader } from "../components/app/AppSubpageHeader";
@@ -28,7 +28,12 @@ function ScoreRing({ score }: { score: number }) {
 export default function ReportPage() {
   const router = useRouter();
   const [session, setSession] = useState<FacultySession | null>(null);
-  const iframeRef = useRef<HTMLIFrameElement>(null);
+  const [embedOrigin, setEmbedOrigin] = useState("");
+  const playerRef = useRef<HTMLIFrameElement>(null);
+
+  useEffect(() => {
+    setEmbedOrigin(typeof window !== "undefined" ? window.location.origin : "");
+  }, []);
 
   useEffect(() => {
     const stored = window.localStorage.getItem("lecturekit_faculty_session");
@@ -39,12 +44,26 @@ export default function ReportPage() {
     setSession(JSON.parse(stored) as FacultySession);
   }, [router]);
 
-  function seekTo(seconds: number) {
-    iframeRef.current?.contentWindow?.postMessage(
-      JSON.stringify({ event: "command", func: "seekTo", args: [seconds, true] }),
-      "*"
-    );
-  }
+  const seekTo = (seconds: number) => {
+    const t = Number(seconds);
+    if (!Number.isFinite(t)) return;
+    if (playerRef.current) {
+      playerRef.current.contentWindow?.postMessage(
+        JSON.stringify({
+          event: "command",
+          func: "seekTo",
+          args: [t, true],
+        }),
+        "*"
+      );
+    }
+  };
+
+  const playerSrc = useMemo(() => {
+    const vid = session?.video_id;
+    if (!vid) return "";
+    return `https://www.youtube.com/embed/${vid}?enablejsapi=1&origin=${embedOrigin}&rel=0`;
+  }, [session?.video_id, embedOrigin]);
 
   if (!session) {
     return (
@@ -84,7 +103,7 @@ export default function ReportPage() {
               <p className="mb-4 text-sm text-zinc-400">{report.top_priority_fix.description}</p>
               <button
                 type="button"
-                onClick={() => seekTo(report.top_priority_fix.timestamp)}
+                onClick={() => seekTo(Number(report.top_priority_fix.timestamp))}
                 className="cursor-pointer font-mono text-xs tabular-nums text-zinc-400 underline-offset-2 transition-colors hover:text-white hover:underline"
               >
                 → {formatTimestamp(report.top_priority_fix.timestamp)}
@@ -139,7 +158,7 @@ export default function ReportPage() {
                               <p className="text-sm text-zinc-400">{issue.description}</p>
                               <button
                                 type="button"
-                                onClick={() => seekTo(issue.timestamp)}
+                                onClick={() => seekTo(Number(issue.timestamp))}
                                 className="whitespace-nowrap font-mono text-xs tabular-nums text-zinc-400 underline-offset-2 transition-colors hover:text-white hover:underline"
                               >
                                 {formatTimestamp(issue.timestamp)}
@@ -177,7 +196,7 @@ export default function ReportPage() {
                           <span className="text-xs capitalize text-zinc-500">{fix.category}</span>
                           <button
                             type="button"
-                            onClick={() => seekTo(fix.timestamp)}
+                            onClick={() => seekTo(Number(fix.timestamp))}
                             className="font-mono text-xs tabular-nums text-zinc-400 underline-offset-2 transition-colors hover:text-white hover:underline"
                           >
                             {formatTimestamp(fix.timestamp)}
@@ -197,8 +216,8 @@ export default function ReportPage() {
           <div className="font-mono text-xs uppercase tracking-wider text-zinc-500">Lecture Video</div>
           <div className="aspect-video overflow-hidden rounded-xl border border-white/5">
             <iframe
-              ref={iframeRef}
-              src={`https://www.youtube.com/embed/${video_id}?enablejsapi=1`}
+              ref={playerRef}
+              src={playerSrc}
               className="h-full w-full"
               allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
               allowFullScreen

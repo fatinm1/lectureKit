@@ -70,14 +70,6 @@ function formatProcessedAt(iso: string): string {
   }).format(date);
 }
 
-function seekTo(seconds: number): void {
-  const iframe = document.getElementById("yt-player") as HTMLIFrameElement | null;
-  iframe?.contentWindow?.postMessage(
-    JSON.stringify({ event: "command", func: "seekTo", args: [seconds, true] }),
-    "*"
-  );
-}
-
 function getApiBaseUrl(): string {
   const raw = process.env.NEXT_PUBLIC_API_URL?.trim();
   return raw && raw.length > 0 ? raw.replace(/\/$/, "") : "http://localhost:8000";
@@ -109,6 +101,12 @@ export default function StudyPage(): JSX.Element {
 
   const translationCacheRef = useRef<Map<LanguageCode, Partial<LectureSession>>>(new Map());
   const searchTranslationCacheRef = useRef<Map<string, SearchResult[]>>(new Map());
+  const playerRef = useRef<HTMLIFrameElement>(null);
+  const [embedOrigin, setEmbedOrigin] = useState("");
+
+  useEffect(() => {
+    setEmbedOrigin(typeof window !== "undefined" ? window.location.origin : "");
+  }, []);
 
   useEffect(() => {
     const raw = window.localStorage.getItem("lecturekit_session");
@@ -139,9 +137,23 @@ export default function StudyPage(): JSX.Element {
 
   const playerSrc = useMemo(() => {
     if (!session) return "";
-    const origin = "http://localhost:3000";
-    return `https://www.youtube.com/embed/${session.video_id}?enablejsapi=1&origin=${encodeURIComponent(origin)}`;
-  }, [session]);
+    return `https://www.youtube.com/embed/${session.video_id}?enablejsapi=1&origin=${embedOrigin}&rel=0`;
+  }, [session, embedOrigin]);
+
+  const seekTo = (seconds: number) => {
+    const t = Number(seconds);
+    if (!Number.isFinite(t)) return;
+    if (playerRef.current) {
+      playerRef.current.contentWindow?.postMessage(
+        JSON.stringify({
+          event: "command",
+          func: "seekTo",
+          args: [t, true],
+        }),
+        "*"
+      );
+    }
+  };
 
   const activeSummary = useMemo(() => {
     if (!session) return "";
@@ -403,11 +415,11 @@ export default function StudyPage(): JSX.Element {
                           if (!isActivationKey(e.key)) return;
                           e.preventDefault();
                           setActiveOutlineIndex(idx);
-                          seekTo(item.timestamp);
+                          seekTo(Number(item.timestamp));
                         }}
                         onClick={() => {
                           setActiveOutlineIndex(idx);
-                          seekTo(item.timestamp);
+                          seekTo(Number(item.timestamp));
                         }}
                         className={[
                           "group w-full cursor-pointer select-none rounded-lg py-3 pl-3 pr-2 text-left transition-colors",
@@ -438,11 +450,12 @@ export default function StudyPage(): JSX.Element {
               <div className="relative w-full">
                 <div className="w-full pt-[56.25%]" aria-hidden />
                 <iframe
+                  ref={playerRef}
                   id="yt-player"
                   title="YouTube player"
                   src={playerSrc}
                   className="absolute inset-0 h-full w-full"
-                  allow="accelerometer autoplay clipboard-write encrypted-media gyroscope picture-in-picture"
+                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
                   referrerPolicy="strict-origin-when-cross-origin"
                 />
               </div>
@@ -545,9 +558,15 @@ export default function StudyPage(): JSX.Element {
                           style={{ backfaceVisibility: "hidden", transform: "rotateY(180deg)" }}
                         >
                           <p className="whitespace-pre-line text-sm text-zinc-300">{session.flashcards[cardIndex]?.answer}</p>
-                          <p className="mt-4 font-mono text-xs tabular-nums text-[#5e6ad2]">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              seekTo(Number(session.flashcards[cardIndex]?.source_timestamp ?? 0))
+                            }
+                            className={`mt-4 text-left font-mono text-xs tabular-nums ${TIMESTAMP_LINK}`}
+                          >
                             Source: {formatTimestamp(session.flashcards[cardIndex]?.source_timestamp ?? 0)}
-                          </p>
+                          </button>
                         </div>
                       </div>
                     </button>
@@ -630,7 +649,7 @@ export default function StudyPage(): JSX.Element {
                                   <p className="mt-1 text-sm text-zinc-300">{r.text}</p>
                                   <button
                                     type="button"
-                                    onClick={() => seekTo(r.start)}
+                                    onClick={() => seekTo(Number(r.start))}
                                     className={`mt-2 font-mono text-xs tabular-nums ${TIMESTAMP_LINK}`}
                                   >
                                     {formatTimestamp(r.start)}
