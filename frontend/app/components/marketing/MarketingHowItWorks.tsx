@@ -7,20 +7,20 @@
 const STEPS: readonly { number: string; title: string; description: string }[] = [
   {
     number: "01",
-    title: "Paste a YouTube URL",
+    title: "Paste a YouTube lecture URL",
     description: "Any public lecture works — LectureKit pulls the transcript and preserves timestamps.",
   },
   {
     number: "02",
-    title: "Three AI agents process the content",
+    title: "Choose your role — Student, Faculty, or Provost",
     description:
-      "Transcript cleanup, structured analysis, and semantic indexing run in parallel so results land fast.",
+      "Pick the workflow you need: a full study kit, a private teaching audit, or a curriculum coverage map across multiple lectures.",
   },
   {
     number: "03",
-    title: "Study smarter",
+    title: "Get results built for you",
     description:
-      "Explore the outline, drill flashcards, and search any concept — jump straight to the exact clip.",
+      "Multi-agent orchestration delivers structured outputs — summaries and search for students, audits for faculty, and objective-level coverage for leaders.",
   },
 ];
 
@@ -43,7 +43,7 @@ export function MarketingHowItWorks(): JSX.Element {
           HOW IT WORKS
         </p>
         <h2 id="how-it-works-title" className="mt-md max-w-3xl text-[clamp(1.75rem,3vw,2.25rem)] font-semibold tracking-tight text-ink">
-          From lecture to mastery in seconds
+          From URL to insight in three steps
         </h2>
 
         <ol className="mt-xxl divide-y divide-marketing-divider border-y border-marketing-divider">

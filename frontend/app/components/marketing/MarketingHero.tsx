@@ -76,11 +76,11 @@ export function MarketingHero(): JSX.Element {
             id="marketing-hero-title"
             className="text-display-marketing text-balance text-ink transition-opacity duration-interaction ease-out"
           >
-            Every lecture. Instantly understood.
+            Turn Any Lecture Into Intelligence
           </h1>
           <p className="mx-auto mt-lg max-w-2xl text-body text-marketing-muted">
-            Paste any YouTube lecture and get an instant study kit — summaries, flashcards, and semantic
-            search. Built for students who learn fast.
+            LectureKit transforms university lecture recordings into personalized study environments,
+            private faculty audits, and curriculum coverage maps — powered by a multi-agent AI pipeline.
           </p>
 
           <div className="mt-xl flex flex-col items-center justify-center gap-sm sm:flex-row sm:gap-md">

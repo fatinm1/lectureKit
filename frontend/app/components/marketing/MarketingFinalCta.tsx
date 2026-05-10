@@ -24,17 +24,17 @@ export function MarketingFinalCta(): JSX.Element {
           id="final-cta-title"
           className="text-[clamp(1.85rem,3vw,2.35rem)] font-semibold tracking-tight text-ink"
         >
-          Start studying smarter
+          Built for students, faculty, and institutional leaders
         </h2>
         <p className="mx-auto mt-md max-w-xl text-body text-marketing-muted">
-          No account required. Paste a URL and go.
+          One app. Three roles. Powered by real AI agent orchestration.
         </p>
         <div className="mt-xl flex justify-center">
           <Link
             href="/app"
             className="inline-flex min-h-[44px] items-center justify-center rounded-linear bg-primary px-[14px] py-[8px] text-button font-medium text-onprimary transition duration-interaction ease-out hover:bg-primary-hover active:bg-primary-focus"
           >
-            Launch the App
+            Launch App
           </Link>
         </div>
       </div>

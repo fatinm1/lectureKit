@@ -1,35 +1,30 @@
 /**
- * Marketing features grid — 2×2 typographic grid without icons or raised surfaces.
+ * Marketing features grid — typographic grid without icons or raised surfaces.
  *
- * Purpose: Enumerate student-facing capabilities aligned with the shipped study workspace.
+ * Purpose: Enumerate Student, Faculty, and Provost capabilities aligned with shipped modes.
  */
 
 const FEATURES: readonly { title: string; description: string }[] = [
   {
-    title: "Structured Outline",
+    title: "Study Smarter",
     description:
-      "Timestamped chapters anchor every topic back to the lecture. Skim fast, then dive deep where you need to.",
+      "Timestamped outline, three-depth summaries, flashcards with source citations, semantic search, and bilingual support in 5 languages.",
   },
   {
-    title: "Multi-depth Summaries",
+    title: "Private Lecture Audit",
     description:
-      "Start with a tight recap, expand into a five-minute synthesis, or read the full narrative when exams demand it.",
+      "A private report scoring your lecture across pedagogical quality, accessibility, equity, and clarity — with a prioritized fix list and timestamped suggested rewrites.",
   },
   {
-    title: "Smart Flashcards",
+    title: "Curriculum Coverage Map",
     description:
-      "AI-generated prompts with cited moments so you always know which clip justified the answer.",
-  },
-  {
-    title: "Semantic Search",
-    description:
-      "Ask natural-language questions and retrieve the precise beat in the video — no scrubbing required.",
+      "Paste multiple lecture URLs and your learning objectives. See exactly which objectives were covered, which were missed, and what to fix — backed by evidence from the lectures themselves.",
   },
 ];
 
 export function MarketingFeatures(): JSX.Element {
   /**
-   * Present four capabilities in a responsive grid with intra-cell dividers instead of cards.
+   * Present three role-based capabilities in a responsive grid with intra-cell dividers instead of cards.
    *
    * Steps:
    * 1. Label the section per marketing taxonomy (`FEATURES`).
@@ -46,10 +41,10 @@ export function MarketingFeatures(): JSX.Element {
           FEATURES
         </p>
         <h2 id="features-title" className="mt-md max-w-3xl text-[clamp(1.75rem,3vw,2.25rem)] font-semibold tracking-tight text-ink">
-          Everything a student needs
+          Student, faculty, and institutional workflows
         </h2>
 
-        <div className="mt-xxl grid gap-x-xl gap-y-section-xl md:grid-cols-2">
+        <div className="mt-xxl grid gap-x-xl gap-y-section-xl md:grid-cols-2 lg:grid-cols-3">
           {FEATURES.map((feature) => (
             <article key={feature.title} className="flex flex-col">
               <h3 className="text-subhead text-ink">{feature.title}</h3>
