@@ -8,7 +8,7 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 
 import type { FacultySession, LectureSession, ProvostSession } from "../../../types/lecture";
@@ -46,6 +46,7 @@ function parseErrorDetailFromBody(payload: unknown): string | null {
 }
 
 export function ProcessUrlPanel(): JSX.Element {
+  const searchParams = useSearchParams();
   const [url, setUrl] = useState("");
   const [mode, setMode] = useState<"student" | "faculty" | "provost">("student");
   const [provostUrls, setProvostUrls] = useState("");
@@ -93,6 +94,13 @@ export function ProcessUrlPanel(): JSX.Element {
   useEffect(() => {
     return () => clearTimers();
   }, []);
+
+  useEffect(() => {
+    const modeParam = searchParams.get("mode");
+    if (modeParam === "faculty" || modeParam === "provost" || modeParam === "student") {
+      setMode(modeParam as "student" | "faculty" | "provost");
+    }
+  }, [searchParams]);
 
   function startStepperTimers(): void {
     clearTimers();

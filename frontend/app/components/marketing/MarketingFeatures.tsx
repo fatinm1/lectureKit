@@ -2,7 +2,12 @@
  * Lumina-style features grid — three capability cards (Student / Faculty / Provost).
  */
 
+import Link from "next/link";
+
 import { MarketingScrollReveal } from "./MarketingScrollReveal";
+
+const FEATURE_SECONDARY_BTN =
+  "inline-flex items-center justify-center rounded-full border border-zinc-700 bg-transparent px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-white/5";
 
 function ArrowRightSmall(): JSX.Element {
   return (
@@ -81,17 +86,22 @@ export function MarketingFeatures(): JSX.Element {
             </div>
           </MarketingScrollReveal>
 
-          <MarketingScrollReveal className="relative flex min-h-[300px] flex-col items-center justify-center overflow-hidden rounded-3xl border border-white/5 bg-zinc-900/50 p-8 text-center transition-colors hover:border-white/10">
+          <MarketingScrollReveal className="relative flex min-h-[300px] flex-col justify-between overflow-hidden rounded-3xl border border-white/5 bg-zinc-900/50 p-8 text-center transition-colors hover:border-white/10">
             <div className="absolute inset-0 z-10 bg-gradient-to-t from-black/80 to-transparent" />
             <h1 className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 select-none font-lk-serif text-[120px] text-zinc-800">
               AI
             </h1>
-            <div className="relative z-20">
-              <h3 className="mb-2 font-lk-serif text-2xl text-white">Faculty</h3>
-              <p className="max-w-[220px] text-sm text-zinc-400">
-                A private report scoring your lecture across pedagogical quality, accessibility, equity, and clarity with
-                timestamped suggested rewrites.
-              </p>
+            <div className="relative z-20 mx-auto flex w-full max-w-[260px] flex-col items-center">
+              <div>
+                <h3 className="mb-2 font-lk-serif text-2xl text-white">Faculty</h3>
+                <p className="text-sm text-zinc-400">
+                  A private report scoring your lecture across pedagogical quality, accessibility, equity, and clarity with
+                  timestamped suggested rewrites.
+                </p>
+              </div>
+              <Link href="/app?mode=faculty" className={`${FEATURE_SECONDARY_BTN} mt-8`}>
+                Faculty Mode
+              </Link>
             </div>
           </MarketingScrollReveal>
 
@@ -107,6 +117,9 @@ export function MarketingFeatures(): JSX.Element {
                 Paste multiple lecture URLs and your learning objectives. See which objectives were covered, which were
                 missed, and what to fix.
               </p>
+              <Link href="/app?mode=provost" className={`${FEATURE_SECONDARY_BTN} mt-8`}>
+                Provost Mode
+              </Link>
             </div>
           </MarketingScrollReveal>
         </div>
