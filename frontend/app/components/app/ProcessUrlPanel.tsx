@@ -16,10 +16,10 @@ import type { FacultySession, LectureSession, ProvostSession } from "../../../ty
 const FEATURES = ["Instant Summaries", "Smart Flashcards", "Semantic Search"] as const;
 
 const BTN_PRIMARY =
-  "rounded-full bg-white px-6 py-2.5 text-sm font-medium text-black transition-colors hover:bg-zinc-200 disabled:cursor-not-allowed disabled:opacity-60";
+  "rounded-full bg-zinc-100 px-6 py-2.5 text-sm font-medium text-black transition-colors hover:bg-zinc-200 disabled:cursor-not-allowed disabled:opacity-60";
 const BTN_SECONDARY =
   "rounded-full border border-zinc-700 bg-transparent px-6 py-2.5 text-sm font-medium text-white transition-colors hover:bg-white/5";
-const MODE_ACTIVE = "rounded-full bg-white px-4 py-2 text-sm font-medium text-black";
+const MODE_ACTIVE = "rounded-full bg-zinc-100 px-4 py-2 text-sm font-medium text-black";
 const MODE_INACTIVE =
   "rounded-full border border-zinc-800 px-4 py-2 text-sm font-medium text-zinc-400 transition-colors hover:border-zinc-600 hover:text-white";
 const INPUT_BASE =
@@ -291,7 +291,7 @@ export function ProcessUrlPanel(): JSX.Element {
                 width: 8,
                 height: 8,
                 borderRadius: 9999,
-                backgroundColor: "#fafafa",
+                backgroundColor: "#f4f4f5",
               }}
             />
           ) : state === "complete" ? (

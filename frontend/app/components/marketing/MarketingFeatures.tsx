@@ -62,9 +62,9 @@ export function MarketingFeatures(): JSX.Element {
             <div>
               <h3 className="text-2xl font-light leading-snug text-white">
                 An easy to <br />
-                <span className="font-lk-serif italic text-[#5e6ad2]">STUDY</span> <br />
+                <span className="font-lk-serif italic text-zinc-400">STUDY</span> <br />
                 flow for every <br />
-                <span className="rounded-sm bg-[#5e6ad2] px-1 text-lg font-bold text-white">learner</span>
+                <span className="rounded-sm bg-zinc-700 px-1 text-lg font-bold text-white">learner</span>
               </h3>
               <p className="mt-6 text-sm leading-relaxed text-zinc-400">
                 Student — Compress 60 minutes of lecture into 15 minutes of active study. Timestamped outline,
@@ -74,7 +74,7 @@ export function MarketingFeatures(): JSX.Element {
             <div className="mt-8 flex items-center gap-2">
               <a
                 href="/study"
-                className="flex items-center gap-2 rounded-full bg-zinc-800 px-4 py-2 text-sm text-white transition-colors hover:bg-zinc-700"
+                className="flex items-center gap-2 rounded-full bg-zinc-100 px-6 py-2.5 text-sm font-medium text-black transition-colors hover:bg-zinc-200"
               >
                 Study Mode <ArrowRightSmall />
               </a>

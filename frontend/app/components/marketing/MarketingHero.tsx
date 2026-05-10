@@ -61,7 +61,7 @@ function ZapIcon(): JSX.Element {
       strokeWidth="2"
       strokeLinecap="round"
       strokeLinejoin="round"
-      className="text-[#5e6ad2]"
+      className="text-zinc-400"
       aria-hidden
     >
       <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
@@ -111,7 +111,7 @@ export function MarketingHero(): JSX.Element {
               </p>
               <Link
                 href="/app"
-                className="mt-auto w-full rounded-lg bg-[#5e6ad2] py-2 text-center text-sm font-medium text-white transition-colors hover:bg-[#4f5ab8]"
+                className="mt-auto w-full rounded-full bg-zinc-100 px-6 py-2.5 text-center text-sm font-medium text-black transition-colors hover:bg-zinc-200"
               >
                 Launch App
               </Link>
@@ -130,7 +130,7 @@ export function MarketingHero(): JSX.Element {
               </p>
               <a
                 href="#features"
-                className="mt-auto w-full rounded-lg border border-zinc-700 bg-transparent py-2 text-center text-sm font-medium text-white transition-colors hover:bg-white/5"
+                className="mt-auto w-full rounded-full border border-zinc-700 bg-transparent px-6 py-2.5 text-center text-sm font-medium text-white transition-colors hover:bg-white/5"
               >
                 Learn More
               </a>
@@ -157,7 +157,7 @@ export function MarketingHero(): JSX.Element {
 
       <div className="lk-float-delayed absolute bottom-20 right-[5%] hidden xl:block">
         <div className="flex w-48 items-center gap-3 rounded-xl border border-white/10 bg-zinc-800/80 p-3 shadow-2xl backdrop-blur-md">
-          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[#5e6ad2]/30">
+          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-zinc-800">
             <ZapIcon />
           </div>
           <div>

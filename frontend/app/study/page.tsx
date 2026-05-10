@@ -50,11 +50,11 @@ const LANGUAGE_OPTIONS: Array<{ code: LanguageCode; label: string; target: strin
   { code: "ar", label: "Arabic", target: "Arabic" },
 ];
 
-const PILL_ACTIVE = "rounded-full bg-white px-4 py-2 text-sm font-medium text-black";
+const PILL_ACTIVE = "rounded-full bg-zinc-100 px-4 py-2 text-sm font-medium text-black";
 const PILL_INACTIVE =
   "rounded-full border border-zinc-800 px-4 py-2 text-sm font-medium text-zinc-400 transition-colors hover:border-zinc-600 hover:text-white";
 const BTN_PRIMARY =
-  "rounded-full bg-white px-6 py-2.5 text-sm font-medium text-black transition-colors hover:bg-zinc-200 disabled:cursor-not-allowed disabled:opacity-60";
+  "rounded-full bg-zinc-100 px-6 py-2.5 text-sm font-medium text-black transition-colors hover:bg-zinc-200 disabled:cursor-not-allowed disabled:opacity-60";
 const TIMESTAMP_LINK =
   "cursor-pointer text-zinc-400 underline-offset-2 transition-colors hover:text-white hover:underline";
 

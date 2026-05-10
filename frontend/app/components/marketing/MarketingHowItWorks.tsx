@@ -27,7 +27,7 @@ export function MarketingHowItWorks(): JSX.Element {
               </div>
               <div className="flex justify-between text-[10px] text-zinc-500">
                 <span>Public lecture URL</span>
-                <span className="rounded-full bg-[#5e6ad2]/20 px-2 py-0.5 text-[#5e6ad2]">Valid</span>
+                <span className="rounded-full bg-zinc-800 px-2 py-0.5 text-zinc-400">Valid</span>
               </div>
             </div>
             <h3 className="mb-1 font-lk-serif text-xl text-white">Paste a YouTube URL</h3>
@@ -38,7 +38,7 @@ export function MarketingHowItWorks(): JSX.Element {
           <MarketingScrollReveal className="group relative overflow-hidden rounded-3xl border border-white/5 bg-zinc-900/30 p-8">
             <div className="mb-6 flex gap-4">
               <div className="flex-1 transform rounded-xl border border-white/10 bg-zinc-950 p-4 shadow-xl transition-transform duration-500 delay-75 group-hover:-translate-y-1">
-                <div className="mb-2 text-xs font-medium text-[#5e6ad2]">Student</div>
+                <div className="mb-2 text-xs font-medium text-zinc-400">Student</div>
                 <div className="text-[10px] text-zinc-500">Study kit &amp; search</div>
               </div>
               <div className="flex-1 transform rounded-xl border border-white/10 bg-zinc-950 p-4 shadow-xl transition-transform duration-500 group-hover:-translate-y-1">
@@ -55,7 +55,7 @@ export function MarketingHowItWorks(): JSX.Element {
             <div className="mb-6 space-y-3">
               <div className="flex transform items-center gap-2 transition-transform group-hover:translate-x-1">
                 <div className="h-2 flex-1 overflow-hidden rounded-full bg-zinc-800">
-                  <div className="h-full w-[88%] rounded-full bg-[#5e6ad2]" />
+                  <div className="h-full w-[88%] rounded-full bg-zinc-400" />
                 </div>
                 <span className="text-[10px] text-zinc-500">Agents</span>
               </div>
@@ -73,7 +73,7 @@ export function MarketingHowItWorks(): JSX.Element {
           {/* Card 4: Results */}
           <MarketingScrollReveal className="group relative overflow-hidden rounded-3xl border border-white/5 bg-zinc-900/30 p-8">
             <div className="mb-6 flex items-center gap-4 rounded-xl border border-white/10 bg-zinc-950 p-3 shadow-lg">
-              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#5e6ad2]/20 text-sm font-medium text-[#5e6ad2]">
+              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-zinc-800 text-sm font-medium text-zinc-300">
                 ✓
               </div>
               <div className="flex-1">

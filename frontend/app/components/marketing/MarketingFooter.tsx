@@ -46,7 +46,7 @@ export function MarketingFooter(): JSX.Element {
           <div className="mb-20 flex flex-col items-center justify-center gap-4 sm:flex-row">
             <Link
               href="/app"
-              className="w-full rounded-full bg-[#5e6ad2] px-8 py-3 font-medium text-white transition-colors hover:bg-[#4f5ab8] sm:w-auto"
+              className="w-full rounded-full bg-zinc-100 px-6 py-2.5 text-center text-sm font-medium text-black transition-colors hover:bg-zinc-200 sm:w-auto"
             >
               Launch App
             </Link>
@@ -54,7 +54,7 @@ export function MarketingFooter(): JSX.Element {
               href={GITHUB}
               target="_blank"
               rel="noopener noreferrer"
-              className="text-sm font-medium text-zinc-400 transition-colors hover:text-white"
+              className="rounded-full border border-zinc-700 bg-transparent px-6 py-2.5 text-sm font-medium text-white transition-colors hover:bg-white/5"
             >
               View on GitHub
             </a>
@@ -65,7 +65,7 @@ export function MarketingFooter(): JSX.Element {
       <div className="mx-auto grid max-w-7xl grid-cols-2 gap-8 border-t border-white/5 px-6 pt-12 md:grid-cols-4">
         <div className="col-span-2 md:col-span-1">
           <div className="mb-4 flex items-center gap-2">
-            <div className="flex h-6 w-6 items-center justify-center rounded-full bg-white">
+            <div className="flex h-6 w-6 items-center justify-center rounded-full bg-zinc-100">
               <SparklesIcon />
             </div>
             <span className="font-lk-serif tracking-tight text-white">LectureKit</span>

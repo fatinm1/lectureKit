@@ -42,19 +42,19 @@ export function MarketingWhySection(): JSX.Element {
 
           <div className="mb-8 space-y-4">
             <div className="flex items-center gap-3">
-              <div className="flex h-5 w-5 items-center justify-center rounded-full bg-[#5e6ad2]/20">
+              <div className="flex h-5 w-5 items-center justify-center rounded-full bg-zinc-800">
                 <CheckIcon />
               </div>
               <span className="text-sm text-zinc-300">Students compress 60 minutes into 15 minutes of active study</span>
             </div>
             <div className="flex items-center gap-3">
-              <div className="flex h-5 w-5 items-center justify-center rounded-full bg-[#5e6ad2]/20">
+              <div className="flex h-5 w-5 items-center justify-center rounded-full bg-zinc-800">
                 <CheckIcon />
               </div>
               <span className="text-sm text-zinc-300">Faculty get private timestamped feedback before publishing</span>
             </div>
             <div className="flex items-center gap-3">
-              <div className="flex h-5 w-5 items-center justify-center rounded-full bg-[#5e6ad2]/20">
+              <div className="flex h-5 w-5 items-center justify-center rounded-full bg-zinc-800">
                 <CheckIcon />
               </div>
               <span className="text-sm text-zinc-300">
@@ -65,7 +65,7 @@ export function MarketingWhySection(): JSX.Element {
 
           <Link
             href="/app"
-            className="inline-block rounded-full bg-[#5e6ad2] px-6 py-3 text-sm font-medium text-white transition-colors hover:bg-[#4f5ab8]"
+            className="inline-block rounded-full bg-zinc-100 px-6 py-2.5 text-sm font-medium text-black transition-colors hover:bg-zinc-200"
           >
             Launch App
           </Link>
@@ -75,7 +75,7 @@ export function MarketingWhySection(): JSX.Element {
           <div className="rounded-3xl border border-white/10 bg-zinc-900/80 p-8 shadow-2xl backdrop-blur-sm">
             <div className="mb-6 flex items-center justify-between">
               <span className="text-xs font-semibold uppercase tracking-wider text-zinc-500">Faculty audit preview</span>
-              <span className="rounded-full bg-[#5e6ad2]/20 px-3 py-1 text-xs font-medium text-[#5e6ad2]">
+              <span className="rounded-full border border-zinc-700 bg-zinc-800 px-3 py-1 text-xs font-medium text-zinc-300">
                 Private
               </span>
             </div>
@@ -85,7 +85,7 @@ export function MarketingWhySection(): JSX.Element {
               <span className="pb-2 ml-2 text-sm text-zinc-400">overall lecture quality</span>
             </div>
             <div className="rounded-xl border border-white/5 bg-zinc-950/80 p-4">
-              <div className="mb-2 text-xs font-medium uppercase tracking-wide text-[#5e6ad2]">Top priority fix</div>
+              <div className="mb-2 text-xs font-medium uppercase tracking-wide text-zinc-400">Top priority fix</div>
               <p className="text-sm text-zinc-300">
                 Reduce jargon in minutes 12–18 — add a plain-language recap of the three evaluation criteria before the
                 worked example.

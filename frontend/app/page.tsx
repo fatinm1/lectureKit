@@ -13,7 +13,7 @@ import { MarketingWhySection } from "./components/marketing/MarketingWhySection"
 
 export default function MarketingHomePage(): JSX.Element {
   return (
-    <div className="lk-marketing-scrollbar flex min-h-screen flex-col overflow-x-hidden bg-zinc-950 font-sans text-zinc-200 antialiased selection:bg-[#5e6ad2]/30">
+    <div className="lk-marketing-scrollbar flex min-h-screen flex-col overflow-x-hidden bg-zinc-950 font-sans text-zinc-200 antialiased selection:bg-zinc-600/30">
       <MarketingNav />
       <main className="flex-grow">
         <MarketingHero />
