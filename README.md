@@ -6,7 +6,7 @@ LectureKit is a multi-agent AI system built for the **Cloudforce Frontier Intern
 
 ## Live demo
 
-Coming after deployment — add Vercel URL here
+Coming after deployment — https://lecture-kit.vercel.app/
 
 ## Features
 
