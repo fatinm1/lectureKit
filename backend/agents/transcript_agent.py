@@ -302,6 +302,10 @@ class TranscriptAgent:
         # Step: Extract canonical ID early; downstream tooling requires the 11-char ID.
         video_id = extract_youtube_video_id(youtube_url)
 
+        # Fail fast: legitimate YouTube IDs are exactly 11 chars [A-Za-z0-9_-]; skip proxy fallbacks on junk.
+        if not re.match(r"^[a-zA-Z0-9_-]{11}$", video_id):
+            raise InvalidYouTubeUrlError(f"Invalid YouTube video ID: {video_id}")
+
         # Step: Fetch transcript with a timeout so network stalls don’t hang the API.
         entries = self._fetch_transcript_entries(video_id)
 

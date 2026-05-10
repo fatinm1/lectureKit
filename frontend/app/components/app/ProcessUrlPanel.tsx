@@ -30,6 +30,21 @@ function getApiBaseUrl(): string {
   return raw && raw.length > 0 ? raw.replace(/\/$/, "") : "http://localhost:8000";
 }
 
+/** Prefer FastAPI `detail` string; supports validation error arrays. */
+function parseErrorDetailFromBody(payload: unknown): string | null {
+  if (!payload || typeof payload !== "object") return null;
+  const detail = (payload as { detail?: unknown }).detail;
+  if (typeof detail === "string" && detail.trim()) return detail.trim();
+  if (Array.isArray(detail) && detail.length > 0) {
+    const first = detail[0];
+    if (first && typeof first === "object" && first !== null && "msg" in first) {
+      const msg = (first as { msg?: unknown }).msg;
+      if (typeof msg === "string" && msg.trim()) return msg.trim();
+    }
+  }
+  return null;
+}
+
 export function ProcessUrlPanel(): JSX.Element {
   const [url, setUrl] = useState("");
   const [mode, setMode] = useState<"student" | "faculty" | "provost">("student");
@@ -232,21 +247,19 @@ export function ProcessUrlPanel(): JSX.Element {
       });
 
       if (!response.ok) {
-        const detailValue =
-          payload && typeof payload === "object" && "detail" in payload ? (payload as { detail: unknown }).detail : null;
-
-        const friendly =
-          response.status === 422
+        const errorData = payload && typeof payload === "object" ? payload : {};
+        const detailMsg = parseErrorDetailFromBody(errorData);
+        const fallbackStatus = `Error ${response.status} — please try a different URL`;
+        const message =
+          detailMsg ||
+          (response.status === 422
             ? "Please paste a valid YouTube URL."
             : response.status === 404
-              ? "No transcript available for that video (private/unavailable/transcripts disabled)."
+              ? "Could not retrieve transcript for this video. Make sure the URL is public and has captions available."
               : response.status === 504
                 ? "The transcript fetch timed out. Please try again."
-                : "Request failed. Please try again.";
-
-        const technicalTail = detailValue && typeof detailValue === "string" ? ` (${detailValue})` : "";
-
-        setStatusMessage(`${friendly}${technicalTail}`);
+                : fallbackStatus);
+        resetToForm(message);
         return;
       }
 
@@ -265,7 +278,7 @@ export function ProcessUrlPanel(): JSX.Element {
       }, 500);
     } catch (error) {
       console.error("[LectureKit] Failed to reach backend", error);
-      setStatusMessage("Network error — is the FastAPI server running?");
+      resetToForm("Network error — is the FastAPI server running?");
     } finally {
       setIsSubmitting(false);
     }

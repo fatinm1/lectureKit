@@ -246,6 +246,8 @@ async def faculty_report(request: Request) -> dict:
 
     try:
         _, chunks = transcript_agent.process(youtube_url)
+    except InvalidYouTubeUrlError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     except TranscriptUnavailableError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except TranscriptFetchTimeoutError as exc:
