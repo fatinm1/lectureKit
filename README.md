@@ -93,30 +93,37 @@ A provost pastes multiple lecture URLs and their course learning objectives and 
 
 ## Data Flow
 
-User pastes URL + selects mode  
-↓  
-Next.js Frontend (Vercel)  
-↓  
-FastAPI Backend (Railway EU West)  
-↓  
-Agent 1: Transcript Agent  ←── Supadata API / yt-dlp  
-↓  
-┌────┴────┐─────────────────┐  
-↓         ↓                 ↓  
-Agent 2    Agent 3          Agent 5/6  
-Content    Search           Faculty/Provost  
-(Claude)   (MiniLM+         (Claude)  
-ChromaDB)  
-↓         ↓                 ↓  
-└────┬────┘                 │  
-↓                     ↓  
-localStorage           localStorage  
-↓                     ↓  
-/study               /report or /curriculum  
-↓                     ↓  
-YouTube iframe          YouTube iframe  
-(seekTo via             (seekTo via  
-postMessage)            postMessage)
+```text
+User pastes URL + selects mode
+              │
+              ▼
+   Next.js Frontend (Vercel)
+              │
+              ▼
+FastAPI Backend (Railway EU West)
+              │
+              ▼
+Agent 1: Transcript Agent ◄── Supadata API / yt-dlp
+              │
+      ┌───────┼─────────┐
+      │       │         │
+      ▼       ▼         ▼
+   Agent 2    Agent 3     Agent 5/6
+   Content    Search      Faculty / Provost
+  (Claude) (MiniLM+ChromaDB) (Claude)
+      │       │         │
+      └───┬───┘         │
+          │             │
+          ▼             ▼
+    localStorage   localStorage
+          │             │
+          ▼             ▼
+       /study   /report or /curriculum
+          │             │
+          ▼             ▼
+   YouTube iframe     YouTube iframe
+   (seekTo via postMessage)
+```
 
 Agent 2 and Agent 3 run in parallel in Student mode. Agent 4 (Translation) runs on demand when the user selects a language — separate /translate call, cached per session.
 
