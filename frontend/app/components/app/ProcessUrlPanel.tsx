@@ -178,10 +178,19 @@ export function ProcessUrlPanel(): JSX.Element {
       throw new Error("Unexpected response payload.");
     }
     const obj = payload as Record<string, unknown>;
+    const rawFailed = obj.failed_urls;
+    const failed_urls: ProvostSession["failed_urls"] = Array.isArray(rawFailed)
+      ? rawFailed.map((item) => {
+          const row = item && typeof item === "object" ? (item as Record<string, unknown>) : {};
+          return { url: String(row.url ?? ""), error: String(row.error ?? "") };
+        })
+      : [];
+
     const session: ProvostSession = {
       lecture_count: Number(obj.lecture_count ?? 0),
       video_ids: (obj.video_ids as string[]) ?? [],
       curriculum_map: (obj.curriculum_map as ProvostSession["curriculum_map"]) ?? ({} as ProvostSession["curriculum_map"]),
+      failed_urls,
     };
     if (!session.lecture_count || !session.curriculum_map) {
       throw new Error("Missing required fields in response.");

@@ -111,9 +111,15 @@ export interface CurriculumMap {
   recommendations: ProvostRecommendation[];
 }
 
+export interface ProvostFailedUrl {
+  url: string;
+  error: string;
+}
+
 export interface ProvostSession {
   lecture_count: number;
   video_ids: string[];
   curriculum_map: CurriculumMap;
+  failed_urls?: ProvostFailedUrl[];
 }
 

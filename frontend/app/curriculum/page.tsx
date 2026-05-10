@@ -80,6 +80,27 @@ export default function CurriculumPage() {
       <AppSubpageHeader title="Curriculum Coverage Map" right={headerRight} />
 
       <div className="mx-auto max-w-6xl space-y-8 px-6 py-8">
+        {session.failed_urls && session.failed_urls.length > 0 && (
+          <div className="mb-6 rounded-xl border border-[#ba7517] bg-[#1a1200] p-4">
+            <div className="mb-2 flex items-center gap-2">
+              <span className="text-sm font-medium text-[#ba7517]">
+                ⚠ {session.failed_urls.length} lecture{session.failed_urls.length > 1 ? "s" : ""} could not be processed
+              </span>
+            </div>
+            <ul className="space-y-1">
+              {session.failed_urls.map((item, i) => (
+                <li key={i} className="break-all font-mono text-xs text-zinc-400">
+                  {item.url}
+                </li>
+              ))}
+            </ul>
+            <p className="mt-2 text-xs text-zinc-500">
+              The curriculum map below is based on the {session.lecture_count} lecture{session.lecture_count > 1 ? "s" : ""}{" "}
+              that were successfully processed.
+            </p>
+          </div>
+        )}
+
         <MarketingScrollReveal>
           <div className="rounded-2xl border border-white/5 bg-zinc-900/50 p-6 transition-colors hover:border-white/10">
             <h2 className="mb-3 font-mono text-xs font-semibold uppercase tracking-widest text-zinc-500">Executive Summary</h2>
