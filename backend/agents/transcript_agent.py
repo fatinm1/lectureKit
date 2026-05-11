@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import json
+import logging
 import os
 import re
 from dataclasses import dataclass
@@ -39,6 +40,8 @@ from youtube_transcript_api._errors import (
 from models.schemas import TranscriptChunk
 from utils.youtube import InvalidYouTubeUrlError, extract_youtube_video_id
 
+logger = logging.getLogger(__name__)
+
 
 class TranscriptAgentError(Exception):
     """Base class for TranscriptAgent failures."""
@@ -50,6 +53,20 @@ class TranscriptFetchTimeoutError(TranscriptAgentError):
 
 class TranscriptUnavailableError(TranscriptAgentError):
     """Raised when a transcript cannot be retrieved (disabled/missing/unavailable)."""
+
+
+class _SupadataRawError(Exception):
+    """
+    Internal: raw Supadata/API diagnostic text before user-friendly mapping.
+
+    Used so is_terminal_error() can match upstream wording (e.g. live stream, private).
+    """
+
+    __slots__ = ("raw_text",)
+
+    def __init__(self, raw_text: str) -> None:
+        self.raw_text = raw_text
+        super().__init__(raw_text)
 
 
 USER_FRIENDLY_MSG_LIVESTREAM = (
@@ -75,6 +92,11 @@ TERMINAL_ERROR_KEYWORDS = (
     "unavailable",
     "does not exist",
     "invalid youtube video id",
+    "sign in",
+    "age-restricted",
+    "members only",
+    "video unavailable",
+    "not available",
 )
 
 
@@ -111,7 +133,17 @@ def user_friendly_transcript_failure_message(
 
     if "premiere" in combined or "is live" in combined or "live" in combined:
         return USER_FRIENDLY_MSG_LIVESTREAM
-    if "private" in combined or "unavailable" in combined or "does not exist" in combined:
+    if (
+        "private" in combined
+        or "unavailable" in combined
+        or "does not exist" in combined
+        or "sign in" in combined
+        or "age-restricted" in combined
+        or "age restricted" in combined
+        or "members only" in combined
+        or "video unavailable" in combined
+        or "not available" in combined
+    ):
         return USER_FRIENDLY_MSG_PRIVATE
     if "no transcript" in combined or "subtitles" in combined or "captions" in combined:
         return USER_FRIENDLY_MSG_NO_TRANSCRIPT
@@ -255,12 +287,12 @@ class TranscriptAgent:
             List of transcript entries with text, start, duration
 
         Raises:
-            TranscriptUnavailableError: If transcript cannot be retrieved (user-facing message).
+            _SupadataRawError: Recoverable upstream failure (caller maps terminal vs fallback).
             TranscriptFetchTimeoutError: If the HTTP request times out.
         """
         api_key = (os.getenv("SUPADATA_API_KEY") or "").strip()
         if not api_key:
-            raise TranscriptUnavailableError(USER_FRIENDLY_MSG_TRANSCRIPT_GENERIC)
+            raise _SupadataRawError("Transcript provider API key is not configured")
 
         url = "https://api.supadata.ai/v1/youtube/transcript"
         params = {"videoId": video_id, "text": "false"}
@@ -270,20 +302,22 @@ class TranscriptAgent:
             response = requests.get(url, params=params, headers=headers, timeout=30)
 
             if response.status_code == 404:
-                raise TranscriptUnavailableError(
-                    user_friendly_transcript_failure_message(detail=response.text[:800])
-                )
+                raise _SupadataRawError(response.text[:800] if response.text else "HTTP 404 transcript request")
             if response.status_code == 401:
-                raise TranscriptUnavailableError(USER_FRIENDLY_MSG_TRANSCRIPT_GENERIC)
+                raise _SupadataRawError(response.text[:400] if response.text else "HTTP 401 unauthorized")
             if response.status_code != 200:
-                raise TranscriptUnavailableError(
-                    user_friendly_transcript_failure_message(detail=response.text[:800])
-                )
+                body = response.text[:800] if response.text else ""
+                raise _SupadataRawError(body or f"HTTP {response.status_code} transcript request")
 
-            data = response.json()
+            try:
+                data = response.json()
+            except ValueError as exc:
+                snippet = (response.text or "")[:400]
+                raise _SupadataRawError(f"Non-JSON transcript response: {snippet}") from exc
+
             content = data.get("content", [])
             if not content:
-                raise TranscriptUnavailableError(USER_FRIENDLY_MSG_NO_TRANSCRIPT)
+                raise _SupadataRawError("Transcript response contained no content array entries")
 
             entries: list[dict] = []
             for segment in content:
@@ -299,17 +333,19 @@ class TranscriptAgent:
                 )
 
             if not entries:
-                raise TranscriptUnavailableError(USER_FRIENDLY_MSG_NO_TRANSCRIPT)
+                raise _SupadataRawError("Transcript response had no usable text segments after parsing")
 
             print(f"Supadata succeeded: {len(entries)} segments for video {video_id}")
             return entries
 
-        except TranscriptUnavailableError:
+        except _SupadataRawError:
             raise
         except requests.exceptions.Timeout as exc:
             raise TranscriptFetchTimeoutError(USER_FRIENDLY_MSG_TRANSCRIPT_GENERIC) from exc
+        except requests.exceptions.RequestException as exc:
+            raise _SupadataRawError(str(exc)) from exc
         except Exception as exc:
-            raise TranscriptUnavailableError(user_friendly_transcript_failure_message(exc=exc)) from exc
+            raise _SupadataRawError(str(exc)) from exc
 
     def _transcript_proxies(self) -> dict[str, str] | None:
         """
@@ -410,13 +446,22 @@ class TranscriptAgent:
                 return self._fetch_via_supadata(video_id)
             except TranscriptFetchTimeoutError:
                 print("Supadata timed out, falling back to direct methods")
-            except TranscriptUnavailableError as exc:
-                supadata_error = str(exc)
-                if is_terminal_error(supadata_error):
+            except _SupadataRawError as exc:
+                raw_error = exc.raw_text
+                if is_terminal_error(raw_error):
                     raise TranscriptUnavailableError(
-                        user_friendly_transcript_failure_message(detail=supadata_error)
+                        user_friendly_transcript_failure_message(detail=raw_error)
                     ) from exc
-                print(f"Supadata failed: {supadata_error[:100]}, falling back to direct methods")
+                logger.warning("Supadata failed with non-terminal error: %s", raw_error[:500])
+                print(f"Supadata failed (non-terminal): {raw_error[:100]}...")
+            except Exception as exc:
+                raw_error = str(exc)
+                if is_terminal_error(raw_error):
+                    raise TranscriptUnavailableError(
+                        user_friendly_transcript_failure_message(detail=raw_error)
+                    ) from exc
+                logger.warning("Supadata failed with non-terminal error: %s", raw_error[:500])
+                print(f"Supadata failed (non-terminal): {raw_error[:100]}...")
 
         cookies_path = self._cookie_file_path()
         proxy_url_candidates = self._get_proxy_list()
