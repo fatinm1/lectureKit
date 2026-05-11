@@ -52,6 +52,56 @@ class TranscriptUnavailableError(TranscriptAgentError):
     """Raised when a transcript cannot be retrieved (disabled/missing/unavailable)."""
 
 
+USER_FRIENDLY_MSG_LIVESTREAM = (
+    "This video is a live stream or premiere. LectureKit requires a recorded lecture with captions available."
+)
+USER_FRIENDLY_MSG_PRIVATE = (
+    "This video is private or unavailable. Please use a public YouTube lecture URL."
+)
+USER_FRIENDLY_MSG_NO_TRANSCRIPT = (
+    "No transcript found for this video. Make sure the video has captions enabled and is a recorded lecture, "
+    "not a livestream."
+)
+USER_FRIENDLY_MSG_TRANSCRIPT_GENERIC = (
+    "Could not retrieve transcript for this video. Please try a different public YouTube lecture URL."
+)
+
+
+def user_friendly_transcript_failure_message(
+    detail: str | None = None,
+    *more_details: str,
+    exc: BaseException | None = None,
+) -> str:
+    """
+    Map internal transcript errors to a small set of user-facing strings.
+
+    Order: livestream / premiere → private / unavailable → missing captions → generic.
+    """
+    parts: list[str] = []
+    if detail and detail.strip():
+        parts.append(detail.strip())
+    for d in more_details:
+        if d and d.strip():
+            parts.append(d.strip())
+    if exc is not None:
+        cur: BaseException | None = exc
+        seen: set[int] = set()
+        while cur is not None and id(cur) not in seen:
+            seen.add(id(cur))
+            parts.append(str(cur))
+            cur = cur.__cause__
+
+    combined = " ".join(parts).lower()
+
+    if "premiere" in combined or "is live" in combined or "live" in combined:
+        return USER_FRIENDLY_MSG_LIVESTREAM
+    if "private" in combined or "unavailable" in combined or "does not exist" in combined:
+        return USER_FRIENDLY_MSG_PRIVATE
+    if "no transcript" in combined or "subtitles" in combined or "captions" in combined:
+        return USER_FRIENDLY_MSG_NO_TRANSCRIPT
+    return USER_FRIENDLY_MSG_TRANSCRIPT_GENERIC
+
+
 @dataclass(frozen=True)
 class _WordTime:
     """Internal helper mapping a word token to an approximate timestamp (seconds)."""
@@ -189,11 +239,12 @@ class TranscriptAgent:
             List of transcript entries with text, start, duration
 
         Raises:
-            TranscriptUnavailableError: If Supadata API fails or is not configured.
+            TranscriptUnavailableError: If transcript cannot be retrieved (user-facing message).
+            TranscriptFetchTimeoutError: If the HTTP request times out.
         """
         api_key = (os.getenv("SUPADATA_API_KEY") or "").strip()
         if not api_key:
-            raise TranscriptUnavailableError("SUPADATA_API_KEY not configured")
+            raise TranscriptUnavailableError(USER_FRIENDLY_MSG_TRANSCRIPT_GENERIC)
 
         url = "https://api.supadata.ai/v1/youtube/transcript"
         params = {"videoId": video_id, "text": "false"}
@@ -204,19 +255,19 @@ class TranscriptAgent:
 
             if response.status_code == 404:
                 raise TranscriptUnavailableError(
-                    "Video not found or no transcript available via Supadata"
+                    user_friendly_transcript_failure_message(detail=response.text[:800])
                 )
             if response.status_code == 401:
-                raise TranscriptUnavailableError("Invalid Supadata API key")
+                raise TranscriptUnavailableError(USER_FRIENDLY_MSG_TRANSCRIPT_GENERIC)
             if response.status_code != 200:
                 raise TranscriptUnavailableError(
-                    f"Supadata API error: {response.status_code} {response.text[:100]}"
+                    user_friendly_transcript_failure_message(detail=response.text[:800])
                 )
 
             data = response.json()
             content = data.get("content", [])
             if not content:
-                raise TranscriptUnavailableError("No transcript content returned from Supadata")
+                raise TranscriptUnavailableError(USER_FRIENDLY_MSG_NO_TRANSCRIPT)
 
             entries: list[dict] = []
             for segment in content:
@@ -232,7 +283,7 @@ class TranscriptAgent:
                 )
 
             if not entries:
-                raise TranscriptUnavailableError("Supadata returned empty transcript")
+                raise TranscriptUnavailableError(USER_FRIENDLY_MSG_NO_TRANSCRIPT)
 
             print(f"Supadata succeeded: {len(entries)} segments for video {video_id}")
             return entries
@@ -240,11 +291,9 @@ class TranscriptAgent:
         except TranscriptUnavailableError:
             raise
         except requests.exceptions.Timeout as exc:
-            raise TranscriptFetchTimeoutError("Supadata API request timed out") from exc
+            raise TranscriptFetchTimeoutError(USER_FRIENDLY_MSG_TRANSCRIPT_GENERIC) from exc
         except Exception as exc:
-            raise TranscriptUnavailableError(
-                f"Supadata API unexpected error: {str(exc)}"
-            ) from exc
+            raise TranscriptUnavailableError(user_friendly_transcript_failure_message(exc=exc)) from exc
 
     def _transcript_proxies(self) -> dict[str, str] | None:
         """
@@ -326,8 +375,8 @@ class TranscriptAgent:
            (YOUTUBE_PROXY_URL, YOUTUBE_PROXY_URL_LIST, YOUTUBE_PROXY_URL_1…); optional cookies file.
            With no proxy env vars, tries direct once ([None]).
         2. Same proxy rotation with list_transcripts + fetch.
-        3. yt-dlp caption fallback (first configured proxy + cookies) with nocheckcertificate variant.
-        4. If proxies were configured and everything failed: raise ``All proxy attempts failed``.
+        3. Caption fallback via metadata + VTT download with optional network configuration.
+        4. On total failure, raise TranscriptUnavailableError with a user-facing message (no internal tool names).
 
         Args:
             video_id: YouTube video ID.
@@ -348,7 +397,6 @@ class TranscriptAgent:
 
         cookies_path = self._cookie_file_path()
         proxy_url_candidates = self._get_proxy_list()
-        tried_proxies = bool(any(u for u in proxy_url_candidates if u))
 
         def _run_with_timeout(fn):
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
@@ -373,9 +421,7 @@ class TranscriptAgent:
                 last_exc = exc
                 continue
             except VideoUnavailable as exc:
-                raise TranscriptUnavailableError(
-                    "Video is private, unavailable, or cannot be accessed"
-                ) from exc
+                raise TranscriptUnavailableError(USER_FRIENDLY_MSG_PRIVATE) from exc
             except (TranscriptsDisabled, NoTranscriptFound, CouldNotRetrieveTranscript, ParseError) as exc:
                 last_exc = exc
                 continue
@@ -396,9 +442,7 @@ class TranscriptAgent:
                 last_exc = exc
                 continue
             except VideoUnavailable as exc:
-                raise TranscriptUnavailableError(
-                    "Video is private, unavailable, or cannot be accessed"
-                ) from exc
+                raise TranscriptUnavailableError(USER_FRIENDLY_MSG_PRIVATE) from exc
             except (TranscriptsDisabled, NoTranscriptFound, CouldNotRetrieveTranscript, ParseError) as exc:
                 last_exc = exc
                 continue
@@ -426,9 +470,7 @@ class TranscriptAgent:
                     last_exc = exc
                     continue
                 except VideoUnavailable as exc:
-                    raise TranscriptUnavailableError(
-                        "Video is private, unavailable, or cannot be accessed"
-                    ) from exc
+                    raise TranscriptUnavailableError(USER_FRIENDLY_MSG_PRIVATE) from exc
                 except (TranscriptsDisabled, NoTranscriptFound) as exc:
                     last_exc = exc
                     continue
@@ -440,18 +482,19 @@ class TranscriptAgent:
                     continue
 
         if last_exc is not None:
-            if isinstance(last_exc, (TranscriptsDisabled, NoTranscriptFound)):
-                raise TranscriptUnavailableError(
-                    "No transcript available for this video (transcripts disabled or not found)"
-                ) from last_exc
-            if tried_proxies:
-                raise TranscriptUnavailableError(
-                    f"All proxy attempts failed. Last error: {str(last_exc)}"
-                ) from last_exc
-            raise TranscriptUnavailableError(
-                "Unable to retrieve transcript for this video"
-            ) from last_exc
-        raise TranscriptUnavailableError("Unable to retrieve transcript for this video")
+            if isinstance(last_exc, TranscriptUnavailableError):
+                raise TranscriptUnavailableError(str(last_exc)) from last_exc
+            if isinstance(last_exc, concurrent.futures.TimeoutError):
+                raise TranscriptFetchTimeoutError(USER_FRIENDLY_MSG_TRANSCRIPT_GENERIC) from last_exc
+            if isinstance(last_exc, (TranscriptsDisabled, NoTranscriptFound, CouldNotRetrieveTranscript)):
+                mapped = user_friendly_transcript_failure_message(exc=last_exc)
+                if mapped in (USER_FRIENDLY_MSG_LIVESTREAM, USER_FRIENDLY_MSG_PRIVATE):
+                    raise TranscriptUnavailableError(mapped) from last_exc
+                raise TranscriptUnavailableError(USER_FRIENDLY_MSG_NO_TRANSCRIPT) from last_exc
+            if isinstance(last_exc, ParseError):
+                raise TranscriptUnavailableError(user_friendly_transcript_failure_message(exc=last_exc)) from last_exc
+            raise TranscriptUnavailableError(user_friendly_transcript_failure_message(exc=last_exc)) from last_exc
+        raise TranscriptUnavailableError(USER_FRIENDLY_MSG_TRANSCRIPT_GENERIC)
 
     def _youtube_api_get_transcript(
         self,
@@ -486,9 +529,7 @@ class TranscriptAgent:
             try:
                 transcript = next(iter(transcript_list))
             except StopIteration as exc:
-                raise TranscriptUnavailableError(
-                    "No transcript available for this video (no transcript tracks returned)"
-                ) from exc
+                raise TranscriptUnavailableError(USER_FRIENDLY_MSG_NO_TRANSCRIPT) from exc
         return transcript.fetch()
 
     def _build_ytdlp_opts(self, *, nocheckcertificate: bool) -> dict:
@@ -560,28 +601,20 @@ class TranscriptAgent:
             with YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(video_url, download=False)
         except DownloadError as exc:
-            raise TranscriptUnavailableError(
-                "Unable to retrieve transcript via yt-dlp (video may be unavailable or blocked)"
-            ) from exc
+            raise TranscriptUnavailableError(user_friendly_transcript_failure_message(exc=exc)) from exc
         except Exception as exc:
-            raise TranscriptUnavailableError(
-                "Unable to retrieve transcript via yt-dlp"
-            ) from exc
+            raise TranscriptUnavailableError(user_friendly_transcript_failure_message(exc=exc)) from exc
 
         subtitles = info.get("subtitles") or {}
         auto = info.get("automatic_captions") or {}
         captions_source = subtitles if subtitles else auto
         if not captions_source:
-            raise TranscriptUnavailableError(
-                "No transcript available for this video (no subtitles or automatic captions found)"
-            )
+            raise TranscriptUnavailableError(USER_FRIENDLY_MSG_NO_TRANSCRIPT)
 
         lang = "en" if "en" in captions_source else next(iter(captions_source.keys()))
         formats = captions_source.get(lang) or []
         if not formats:
-            raise TranscriptUnavailableError(
-                "No transcript available for this video (captions metadata missing formats)"
-            )
+            raise TranscriptUnavailableError(USER_FRIENDLY_MSG_NO_TRANSCRIPT)
 
         chosen = None
         for f in formats:
@@ -594,9 +627,7 @@ class TranscriptAgent:
         sub_url = chosen.get("url")
         ext = chosen.get("ext") or ""
         if not sub_url:
-            raise TranscriptUnavailableError(
-                "Unable to retrieve transcript via yt-dlp (missing subtitle URL)"
-            )
+            raise TranscriptUnavailableError(user_friendly_transcript_failure_message(detail=ext))
 
         try:
             resp = requests.get(
@@ -615,25 +646,17 @@ class TranscriptAgent:
             resp.raise_for_status()
             data = resp.text
         except requests.Timeout as exc:
-            raise TranscriptFetchTimeoutError(
-                f"Network timeout while fetching transcript (>{self._fetch_timeout_s:.0f}s)"
-            ) from exc
+            raise TranscriptFetchTimeoutError(USER_FRIENDLY_MSG_TRANSCRIPT_GENERIC) from exc
         except Exception as exc:
-            raise TranscriptUnavailableError(
-                "Unable to download transcript captions via yt-dlp"
-            ) from exc
+            raise TranscriptUnavailableError(user_friendly_transcript_failure_message(exc=exc)) from exc
 
         if ext == "vtt" or data.lstrip().startswith("WEBVTT"):
             entries = self._parse_vtt_to_entries(data)
         else:
-            raise TranscriptUnavailableError(
-                f"yt-dlp returned unsupported caption format '{ext}' (expected vtt)"
-            )
+            raise TranscriptUnavailableError(user_friendly_transcript_failure_message(detail=ext))
 
         if not entries:
-            raise TranscriptUnavailableError(
-                "Transcript captions were downloaded but contained no usable cues"
-            )
+            raise TranscriptUnavailableError(USER_FRIENDLY_MSG_NO_TRANSCRIPT)
 
         return entries
 

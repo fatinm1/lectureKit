@@ -25,6 +25,9 @@ const MODE_INACTIVE =
 const INPUT_BASE =
   "min-h-[44px] w-full rounded-lg border border-white/10 bg-zinc-900 px-3 py-2 text-sm text-white outline-none transition-colors placeholder:text-zinc-500 focus:border-[#5e6ad2]/60 focus:ring-1 focus:ring-[#5e6ad2]";
 
+const ERROR_BANNER =
+  "mx-auto w-full max-w-2xl rounded-xl border border-red-500/45 bg-red-950/50 px-5 py-4 text-left shadow-lg shadow-red-950/20";
+
 function getApiBaseUrl(): string {
   const raw = process.env.NEXT_PUBLIC_API_URL?.trim();
   return raw && raw.length > 0 ? raw.replace(/\/$/, "") : "http://localhost:8000";
@@ -364,6 +367,13 @@ export function ProcessUrlPanel(): JSX.Element {
               : "Paste a public YouTube lecture link. LectureKit will orchestrate transcript extraction, analysis, and search indexing — results surface here as soon as the pipeline ships."}
         </p>
 
+        {statusMessage && uiMode === "form" ? (
+          <div className={`${ERROR_BANNER} mt-8`} role="alert" aria-live="polite">
+            <p className="text-xs font-semibold uppercase tracking-widest text-red-400/90">Could not complete request</p>
+            <p className="mt-2 text-base font-medium leading-relaxed text-red-50">{statusMessage}</p>
+          </div>
+        ) : null}
+
         {uiMode === "form" ? (
           <form
             onSubmit={handleSubmit}
@@ -446,12 +456,6 @@ export function ProcessUrlPanel(): JSX.Element {
               ))}
             </div>
 
-            {statusMessage ? (
-              <p className="text-sm text-[#e53e3e]" role="status">
-                {statusMessage}
-              </p>
-            ) : null}
-
             <p className="text-xs text-zinc-500">
               Prefer the story?{" "}
               <Link
@@ -472,13 +476,16 @@ export function ProcessUrlPanel(): JSX.Element {
             </div>
 
             {statusMessage ? (
-              <div className="mt-8 text-center">
-                <p className="text-sm text-[#e53e3e]" role="status">
-                  {statusMessage}
-                </p>
-                <button type="button" onClick={() => resetToForm()} className={`${BTN_SECONDARY} mt-4`}>
-                  Retry
-                </button>
+              <div className="mt-8 w-full max-w-2xl">
+                <div className={ERROR_BANNER} role="alert" aria-live="polite">
+                  <p className="text-xs font-semibold uppercase tracking-widest text-red-400/90">Could not complete request</p>
+                  <p className="mt-2 text-base font-medium leading-relaxed text-red-50">{statusMessage}</p>
+                </div>
+                <div className="mt-6 flex justify-center">
+                  <button type="button" onClick={() => resetToForm()} className={BTN_SECONDARY}>
+                    Retry
+                  </button>
+                </div>
               </div>
             ) : null}
           </div>
