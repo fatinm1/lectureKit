@@ -60,10 +60,12 @@ class TranslateAgent:
         try:
             prompt = self._build_prompt(content=content, target_language=target)
             raw = self._call_claude(prompt)
-            return self._parse_json_with_retry(raw, content=content, target_language=target)
+            parsed = self._parse_json_with_retry(raw, content=content, target_language=target)
+            return self._normalize_search_results_in_output(content, parsed)
         except Exception:
             # Attempt 2 (fallback): split into two calls to reduce output size and avoid truncation.
-            return self._translate_split(content=content, target_language=target)
+            merged = self._translate_split(content=content, target_language=target)
+            return self._normalize_search_results_in_output(content, merged)
 
     def _translate_split(self, *, content: Dict[str, Any], target_language: str) -> Dict[str, Any]:
         """
@@ -72,6 +74,7 @@ class TranslateAgent:
         content_part1: Dict[str, Any] = {
             "outline": content.get("outline"),
             "flashcards": content.get("flashcards"),
+            "search_results": content.get("search_results"),
         }
         content_part2: Dict[str, Any] = {
             "summary_90s": content.get("summary_90s"),
@@ -92,12 +95,42 @@ class TranslateAgent:
         merged.update(res2 if isinstance(res2, dict) else {})
         return merged
 
+    def _normalize_search_results_in_output(self, original: Dict[str, Any], translated: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        If input included ``search_results`` (list of strings), ensure output has the same length in order.
+        """
+        raw_in = original.get("search_results")
+        if not isinstance(raw_in, list) or len(raw_in) == 0:
+            return translated
+        if not isinstance(translated, dict):
+            return translated
+
+        out = translated.get("search_results")
+        merged = dict(translated)
+
+        if isinstance(out, list) and len(out) == len(raw_in):
+            coerced: list[str] = []
+            for i, item in enumerate(out):
+                if isinstance(item, str):
+                    coerced.append(item)
+                elif isinstance(item, dict) and isinstance(item.get("text"), str):
+                    coerced.append(str(item["text"]))
+                else:
+                    coerced.append(str(raw_in[i]) if i < len(raw_in) else "")
+            merged["search_results"] = coerced
+            return merged
+
+        merged["search_results"] = [str(x) for x in raw_in]
+        return merged
+
     def _build_prompt(self, *, content: Dict[str, Any], target_language: str) -> str:
         payload = json.dumps(content, ensure_ascii=False)
         return (
             f"Translate the following study materials to {target_language}.\n"
             "Return ONLY valid JSON with the exact same structure as the input.\n"
             "Do not translate timestamps or numeric fields (e.g. timestamp, source_timestamp, start, end, chunk_index, word_count, relevance_score).\n"
+            "If the input contains a key \"search_results\" whose value is an array of strings, translate each string in order "
+            "and return an array of the same length with only the translated text for each item.\n"
             "Do not add any explanation.\n"
             "Do not translate proper nouns like names of people or programming languages.\n\n"
             f"{payload}"

@@ -93,6 +93,7 @@ export default function StudyPage(): JSX.Element {
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [isSearching, setIsSearching] = useState(false);
+  const [isTranslatingSearchResults, setIsTranslatingSearchResults] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
 
   const [language, setLanguage] = useState<LanguageCode>("en");
@@ -275,7 +276,9 @@ export default function StudyPage(): JSX.Element {
     }
 
     setIsSearching(true);
+    setIsTranslatingSearchResults(false);
     setSearchError(null);
+    setSearchResults([]);
     try {
       const endpoint = `${getApiBaseUrl()}/search`;
       const response = await fetch(endpoint, {
@@ -299,9 +302,9 @@ export default function StudyPage(): JSX.Element {
       }
 
       const results = payload && typeof payload === "object" && "results" in payload ? payload.results : [];
-      const baseResults = Array.isArray(results) ? results : [];
+      const baseResults: SearchResult[] = Array.isArray(results) ? results : [];
 
-      if (language !== "en" && baseSession) {
+      if (language !== "en" && baseResults.length > 0 && baseSession) {
         const cacheKey = `${language}:${q}`;
         const cached = searchTranslationCacheRef.current.get(cacheKey);
         if (cached) {
@@ -311,30 +314,39 @@ export default function StudyPage(): JSX.Element {
 
         const option = LANGUAGE_OPTIONS.find((o) => o.code === language);
         if (option?.target) {
+          setIsTranslatingSearchResults(true);
           try {
             const tEndpoint = `${getApiBaseUrl()}/translate`;
             const tResp = await fetch(tEndpoint, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
-                content: { results: baseResults.map((r) => ({ text: r.text })) },
+                content: { search_results: baseResults.map((r) => r.text) },
                 target_language: option.target,
               }),
             });
             const tPayload = (await tResp.json().catch(() => null)) as { content?: unknown } | null;
-            const tContent = tPayload?.content as { results?: Array<{ text?: unknown }> } | undefined;
-            const tResults = tContent?.results;
-            if (tResp.ok && Array.isArray(tResults) && tResults.length === baseResults.length) {
+            const tContent = tPayload?.content as { search_results?: unknown } | undefined;
+            const translatedTexts = tContent?.search_results;
+
+            if (
+              tResp.ok &&
+              Array.isArray(translatedTexts) &&
+              translatedTexts.length === baseResults.length &&
+              translatedTexts.every((t) => typeof t === "string")
+            ) {
               const merged = baseResults.map((r: SearchResult, i: number) => ({
                 ...r,
-                text: typeof tResults[i]?.text === "string" ? tResults[i].text : r.text,
+                text: translatedTexts[i] as string,
               }));
               searchTranslationCacheRef.current.set(cacheKey, merged);
               setSearchResults(merged);
               return;
             }
           } catch {
-            // ignore translation failure; fall back to English results
+            // fall back to English result snippets
+          } finally {
+            setIsTranslatingSearchResults(false);
           }
         }
       }
@@ -345,6 +357,7 @@ export default function StudyPage(): JSX.Element {
       setSearchResults([]);
     } finally {
       setIsSearching(false);
+      setIsTranslatingSearchResults(false);
     }
   }
 
@@ -630,6 +643,16 @@ export default function StudyPage(): JSX.Element {
 
                       {isSearching ? (
                         <p className="text-sm text-zinc-500 motion-safe:animate-pulse motion-reduce:animate-none">Searching…</p>
+                      ) : null}
+
+                      {isTranslatingSearchResults ? (
+                        <div className="flex items-center gap-2 text-sm text-zinc-400">
+                          <span
+                            aria-hidden
+                            className="inline-block h-3.5 w-3.5 shrink-0 rounded-full border-2 border-white/15 border-t-[#5e6ad2] motion-safe:animate-spin motion-reduce:animate-none"
+                          />
+                          <span>Translating results…</span>
+                        </div>
                       ) : null}
 
                       {searchError ? <p className="text-sm text-[#e53e3e]">{searchError}</p> : null}
