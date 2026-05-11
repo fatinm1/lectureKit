@@ -10,7 +10,7 @@ LectureKit is a multi-agent AI system built for the **Cloudforce Frontier Intern
 
 ---
 
-## Three Capabilities. One URL.
+## Three Capabilities. One URL
 
 ### Capability 1 — Student
 
