@@ -134,6 +134,12 @@ export function ProcessUrlPanel(): JSX.Element {
     setStatusMessage(message ?? null);
   }
 
+  function switchWorkspaceMode(next: "student" | "faculty" | "provost"): void {
+    setMode(next);
+    setStatusMessage(null);
+    setUrl("");
+  }
+
   function persistStudentSession(payload: unknown): void {
     if (!payload || typeof payload !== "object") {
       throw new Error("Unexpected response payload.");
@@ -380,13 +386,13 @@ export function ProcessUrlPanel(): JSX.Element {
             className="mx-auto mt-10 flex w-full flex-col gap-6 transition-opacity duration-200"
           >
             <div className="flex flex-wrap justify-center gap-2">
-              <button type="button" onClick={() => setMode("student")} className={mode === "student" ? MODE_ACTIVE : MODE_INACTIVE}>
+              <button type="button" onClick={() => switchWorkspaceMode("student")} className={mode === "student" ? MODE_ACTIVE : MODE_INACTIVE}>
                 Student
               </button>
-              <button type="button" onClick={() => setMode("faculty")} className={mode === "faculty" ? MODE_ACTIVE : MODE_INACTIVE}>
+              <button type="button" onClick={() => switchWorkspaceMode("faculty")} className={mode === "faculty" ? MODE_ACTIVE : MODE_INACTIVE}>
                 Faculty
               </button>
-              <button type="button" onClick={() => setMode("provost")} className={mode === "provost" ? MODE_ACTIVE : MODE_INACTIVE}>
+              <button type="button" onClick={() => switchWorkspaceMode("provost")} className={mode === "provost" ? MODE_ACTIVE : MODE_INACTIVE}>
                 Provost
               </button>
             </div>
