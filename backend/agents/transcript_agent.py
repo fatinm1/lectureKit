@@ -66,6 +66,22 @@ USER_FRIENDLY_MSG_TRANSCRIPT_GENERIC = (
     "Could not retrieve transcript for this video. Please try a different public YouTube lecture URL."
 )
 
+TERMINAL_ERROR_KEYWORDS = (
+    "live stream",
+    "livestream",
+    "premiere",
+    "is live",
+    "private",
+    "unavailable",
+    "does not exist",
+    "invalid youtube video id",
+)
+
+
+def is_terminal_error(message: str) -> bool:
+    msg_lower = message.lower()
+    return any(keyword in msg_lower for keyword in TERMINAL_ERROR_KEYWORDS)
+
 
 def user_friendly_transcript_failure_message(
     detail: str | None = None,
@@ -351,9 +367,11 @@ class TranscriptAgent:
         # Step: Extract canonical ID early; downstream tooling requires the 11-char ID.
         video_id = extract_youtube_video_id(youtube_url)
 
-        # Fail fast: legitimate YouTube IDs are exactly 11 chars [A-Za-z0-9_-]; skip proxy fallbacks on junk.
+        # Fail fast: legitimate YouTube IDs are exactly 11 chars [A-Za-z0-9_-]; no network until this passes.
         if not re.match(r"^[a-zA-Z0-9_-]{11}$", video_id):
-            raise InvalidYouTubeUrlError(f"Invalid YouTube video ID: {video_id}")
+            raise InvalidYouTubeUrlError(
+                "Invalid YouTube video ID. Please use a public YouTube lecture URL with a complete watch or youtu.be link."
+            )
 
         # Step: Fetch transcript with a timeout so network stalls don’t hang the API.
         entries = self._fetch_transcript_entries(video_id)
@@ -393,7 +411,12 @@ class TranscriptAgent:
             except TranscriptFetchTimeoutError:
                 print("Supadata timed out, falling back to direct methods")
             except TranscriptUnavailableError as exc:
-                print(f"Supadata failed: {str(exc)[:100]}, falling back to direct methods")
+                supadata_error = str(exc)
+                if is_terminal_error(supadata_error):
+                    raise TranscriptUnavailableError(
+                        user_friendly_transcript_failure_message(detail=supadata_error)
+                    ) from exc
+                print(f"Supadata failed: {supadata_error[:100]}, falling back to direct methods")
 
         cookies_path = self._cookie_file_path()
         proxy_url_candidates = self._get_proxy_list()
