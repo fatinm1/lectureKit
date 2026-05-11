@@ -22,10 +22,12 @@ import json
 import logging
 import os
 import re
+import time
 from dataclasses import dataclass
 from typing import Sequence
 from xml.etree.ElementTree import ParseError
 
+import httpx
 import requests
 from yt_dlp import YoutubeDL
 from yt_dlp.utils import DownloadError
@@ -41,6 +43,12 @@ from models.schemas import TranscriptChunk
 from utils.youtube import InvalidYouTubeUrlError, extract_youtube_video_id
 
 logger = logging.getLogger(__name__)
+
+# Hard cap for Supadata + transcript-api proxy rotation + yt-dlp (worst-case wall time).
+TRANSCRIPT_FETCH_CHAIN_MAX_SECONDS = 15.0
+
+# YouTube oEmbed: instant availability signal before paid transcript routes.
+_OEMBED_URL_TEMPLATE = "https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v={video_id}&format=json"
 
 
 class TranscriptAgentError(Exception):
@@ -97,6 +105,7 @@ TERMINAL_ERROR_KEYWORDS = (
     "members only",
     "video unavailable",
     "not available",
+    "no available server",
 )
 
 
@@ -275,13 +284,58 @@ class TranscriptAgent:
         """Compatibility helper: ordered proxy list; None means no proxy."""
         return self._youtube_transcript_proxy_url_candidates()
 
-    def _fetch_via_supadata(self, video_id: str) -> list[dict]:
+    @staticmethod
+    def _oembed_title_suggests_livestream(title: str) -> bool:
+        """Heuristic on oEmbed title for broadcasts / premieres (oEmbed still returns 200)."""
+        tl = (title or "").lower()
+        if not tl.strip():
+            return False
+        markers = (
+            "live stream",
+            "live now",
+            "going live",
+            "watch live",
+            " (live)",
+            "[live]",
+            "premiere",
+            "upcoming premiere",
+            "🔴",
+        )
+        return any(m in tl for m in markers)
+
+    def _check_video_availability_oembed(self, video_id: str) -> None:
+        """
+        Free YouTube oEmbed probe — private / missing / age-gated often return 401 or 404 before transcript spend.
+        """
+        url = _OEMBED_URL_TEMPLATE.format(video_id=video_id)
+        try:
+            with httpx.Client(timeout=5.0) as client:
+                response = client.get(url)
+            if response.status_code in (401, 404):
+                raise TranscriptUnavailableError(USER_FRIENDLY_MSG_PRIVATE)
+            if response.status_code == 200 and response.content:
+                try:
+                    data = response.json()
+                    title = str(data.get("title") or "")
+                except (ValueError, TypeError, json.JSONDecodeError):
+                    title = ""
+                if self._oembed_title_suggests_livestream(title):
+                    raise TranscriptUnavailableError(USER_FRIENDLY_MSG_LIVESTREAM)
+        except TranscriptUnavailableError:
+            raise
+        except httpx.TimeoutException:
+            return
+        except Exception:
+            return
+
+    def _fetch_via_supadata(self, video_id: str, *, request_timeout: float = 30.0) -> list[dict]:
         """
         Fetch transcript via Supadata API.
         Primary method for cloud deployments where YouTube blocks direct access.
 
         Args:
             video_id: YouTube video ID
+            request_timeout: HTTP timeout (seconds) for the transcript request.
 
         Returns:
             List of transcript entries with text, start, duration
@@ -299,7 +353,7 @@ class TranscriptAgent:
         headers = {"x-api-key": api_key}
 
         try:
-            response = requests.get(url, params=params, headers=headers, timeout=30)
+            response = requests.get(url, params=params, headers=headers, timeout=request_timeout)
 
             if response.status_code == 404:
                 raise _SupadataRawError(response.text[:800] if response.text else "HTTP 404 transcript request")
@@ -425,12 +479,9 @@ class TranscriptAgent:
         Retrieve transcript entries (datacenter / bot mitigation).
 
         Order:
-        1. youtube-transcript-api get_transcript — try each configured proxy in sequence
-           (YOUTUBE_PROXY_URL, YOUTUBE_PROXY_URL_LIST, YOUTUBE_PROXY_URL_1…); optional cookies file.
-           With no proxy env vars, tries direct once ([None]).
-        2. Same proxy rotation with list_transcripts + fetch.
-        3. Caption fallback via metadata + VTT download with optional network configuration.
-        4. On total failure, raise TranscriptUnavailableError with a user-facing message (no internal tool names).
+        0. YouTube oEmbed (instant) — private / missing / some restricted videos before transcript spend.
+        1. Supadata (if configured), then youtube-transcript-api + yt-dlp fallbacks.
+        2. Wall time for the whole chain is capped at TRANSCRIPT_FETCH_CHAIN_MAX_SECONDS.
 
         Args:
             video_id: YouTube video ID.
@@ -438,12 +489,34 @@ class TranscriptAgent:
         Returns:
             List of transcript entries (dicts with `text`, `start`, `duration`).
         """
+        deadline = time.perf_counter() + TRANSCRIPT_FETCH_CHAIN_MAX_SECONDS
+
+        def remaining_s() -> float:
+            return deadline - time.perf_counter()
+
+        def ensure_transcript_chain_deadline() -> None:
+            if remaining_s() <= 0:
+                raise TranscriptUnavailableError(USER_FRIENDLY_MSG_TRANSCRIPT_GENERIC)
+
+        def op_timeout_s() -> float:
+            return max(0.25, min(self._fetch_timeout_s, remaining_s()))
+
+        self._check_video_availability_oembed(video_id)
+
+        def _run_with_timeout(fn):
+            ensure_transcript_chain_deadline()
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(fn)
+                return future.result(timeout=op_timeout_s())
+
         # Try Supadata first (if configured). They handle bot detection upstream.
         supadata_key = (os.getenv("SUPADATA_API_KEY") or "").strip()
         if supadata_key:
             try:
                 print(f"Trying Supadata API for video: {video_id}")
-                return self._fetch_via_supadata(video_id)
+                ensure_transcript_chain_deadline()
+                sup_timeout = max(2.0, min(30.0, remaining_s() - 0.25))
+                return self._fetch_via_supadata(video_id, request_timeout=sup_timeout)
             except TranscriptFetchTimeoutError:
                 print("Supadata timed out, falling back to direct methods")
             except _SupadataRawError as exc:
@@ -466,14 +539,10 @@ class TranscriptAgent:
         cookies_path = self._cookie_file_path()
         proxy_url_candidates = self._get_proxy_list()
 
-        def _run_with_timeout(fn):
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                future = executor.submit(fn)
-                return future.result(timeout=self._fetch_timeout_s)
-
         last_exc: BaseException | None = None
 
         for proxy_url in proxy_url_candidates:
+            ensure_transcript_chain_deadline()
             proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else None
             try:
                 print(f"Trying transcript fetch with proxy: {proxy_url or 'none'}")
@@ -501,6 +570,7 @@ class TranscriptAgent:
                 continue
 
         for proxy_url in proxy_url_candidates:
+            ensure_transcript_chain_deadline()
             proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else None
             try:
                 return _run_with_timeout(
@@ -523,6 +593,7 @@ class TranscriptAgent:
 
         # yt-dlp fallback: try per-proxy too (use same proxy for metadata + VTT download)
         for proxy_url in proxy_url_candidates:
+            ensure_transcript_chain_deadline()
             ytdlp_steps = [
                 lambda u=proxy_url: self._ytdlp_fetch_transcript_entries(
                     video_id, nocheckcertificate=False, proxy_url=u
