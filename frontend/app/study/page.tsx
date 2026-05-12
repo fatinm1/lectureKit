@@ -91,6 +91,7 @@ export default function StudyPage(): JSX.Element {
   const [isCardFlipped, setIsCardFlipped] = useState(false);
 
   const [searchQuery, setSearchQuery] = useState("");
+  const [lastQuery, setLastQuery] = useState("");
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [isTranslatingSearchResults, setIsTranslatingSearchResults] = useState(false);
@@ -130,6 +131,15 @@ export default function StudyPage(): JSX.Element {
       router.replace("/app");
     }
   }, [router]);
+
+  useEffect(() => {
+    if (!baseSession?.video_id) return;
+    setLastQuery("");
+    setSearchQuery("");
+    setSearchResults([]);
+    setSearchError(null);
+    searchTranslationCacheRef.current.clear();
+  }, [baseSession?.video_id]);
 
   const processedLabel = useMemo(() => {
     if (!session) return "";
@@ -187,25 +197,26 @@ export default function StudyPage(): JSX.Element {
     setIsCardFlipped(false);
   }, [cardIndex, rightTab]);
 
-  async function translateTo(nextLang: LanguageCode): Promise<void> {
-    if (!baseSession) return;
+  async function translateTo(nextLang: LanguageCode): Promise<LanguageCode> {
+    if (!baseSession) return language;
+
     setTranslateError(null);
 
     if (nextLang === "en") {
       setLanguage("en");
       setSession(baseSession);
-      return;
+      return "en";
     }
 
     const cached = translationCacheRef.current.get(nextLang);
     if (cached) {
       setLanguage(nextLang);
       setSession({ ...baseSession, ...cached });
-      return;
+      return nextLang;
     }
 
     const option = LANGUAGE_OPTIONS.find((o) => o.code === nextLang);
-    if (!option?.target) return;
+    if (!option?.target) return language;
 
     setIsTranslating(true);
     try {
@@ -228,7 +239,7 @@ export default function StudyPage(): JSX.Element {
         setTranslateError("Translation failed. Showing English content.");
         setLanguage("en");
         setSession(baseSession);
-        return;
+        return "en";
       }
 
       const translated = payload?.content;
@@ -236,7 +247,7 @@ export default function StudyPage(): JSX.Element {
         setTranslateError("Translation returned an invalid payload.");
         setLanguage("en");
         setSession(baseSession);
-        return;
+        return "en";
       }
 
       const translatedObj = translated as TranslatedContentPayload;
@@ -254,65 +265,87 @@ export default function StudyPage(): JSX.Element {
       translationCacheRef.current.set(nextLang, patch);
       setLanguage(nextLang);
       setSession({ ...baseSession, ...patch });
+      return nextLang;
     } catch {
       setTranslateError("Network error — translation service unavailable.");
       setLanguage("en");
       setSession(baseSession);
+      return "en";
     } finally {
       setIsTranslating(false);
     }
   }
 
-  async function runSearch(): Promise<void> {
-    if (!session) return;
-    const q = searchQuery.trim();
+  async function handleLanguageChange(nextLang: LanguageCode): Promise<void> {
+    const applied = await translateTo(nextLang);
+    const q = lastQuery.trim();
+    if (q) {
+      await handleSearch(q, applied);
+    }
+  }
+
+  async function handleSearch(query: string, langOverride?: LanguageCode): Promise<void> {
+    const effectiveLanguage = langOverride ?? language;
+    const s = baseSession;
+    if (!s) return;
+
+    const q = query.trim();
     if (!q) {
       setSearchError("Please enter a search query.");
       return;
     }
-    if (!session.indexed) {
+    if (!s.indexed) {
       setSearchError("Search is not available for this lecture.");
       return;
     }
+
+    const cacheKey = `${effectiveLanguage}:${q}`;
+    const englishCacheKey = `en:${q}`;
 
     setIsSearching(true);
     setIsTranslatingSearchResults(false);
     setSearchError(null);
     setSearchResults([]);
     try {
-      const endpoint = `${getApiBaseUrl()}/search`;
-      const response = await fetch(endpoint, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ youtube_url: session.youtube_url, query: q }),
-      });
-      const payload = (await response.json().catch(() => null)) as
-        | { results: SearchResult[] }
-        | { detail?: string }
-        | null;
-
-      if (!response.ok) {
-        const message =
-          payload && typeof payload === "object" && "detail" in payload && typeof payload.detail === "string"
-            ? payload.detail
-            : "Search failed. Please try again.";
-        setSearchError(message);
-        setSearchResults([]);
+      const cachedForLang = searchTranslationCacheRef.current.get(cacheKey);
+      if (cachedForLang) {
+        setSearchResults(cachedForLang);
+        setLastQuery(q);
         return;
       }
 
-      const results = payload && typeof payload === "object" && "results" in payload ? payload.results : [];
-      const baseResults: SearchResult[] = Array.isArray(results) ? results : [];
+      let baseResults: SearchResult[] | undefined = searchTranslationCacheRef.current.get(englishCacheKey);
+      if (!baseResults) {
+        const endpoint = `${getApiBaseUrl()}/search`;
+        const response = await fetch(endpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ youtube_url: s.youtube_url, query: q }),
+        });
+        const payload = (await response.json().catch(() => null)) as
+          | { results: SearchResult[] }
+          | { detail?: string }
+          | null;
 
-      if (language !== "en" && baseResults.length > 0 && baseSession) {
-        const cacheKey = `${language}:${q}`;
-        const cached = searchTranslationCacheRef.current.get(cacheKey);
-        if (cached) {
-          setSearchResults(cached);
+        if (!response.ok) {
+          const message =
+            payload && typeof payload === "object" && "detail" in payload && typeof payload.detail === "string"
+              ? payload.detail
+              : "Search failed. Please try again.";
+          setSearchError(message);
+          setSearchResults([]);
           return;
         }
 
-        const option = LANGUAGE_OPTIONS.find((o) => o.code === language);
+        const results = payload && typeof payload === "object" && "results" in payload ? payload.results : [];
+        baseResults = Array.isArray(results) ? [...results] : [];
+        searchTranslationCacheRef.current.set(englishCacheKey, baseResults);
+      }
+
+      setLastQuery(q);
+
+      if (effectiveLanguage !== "en" && baseResults.length > 0) {
+        const option = LANGUAGE_OPTIONS.find((o) => o.code === effectiveLanguage);
         if (option?.target) {
           setIsTranslatingSearchResults(true);
           try {
@@ -351,6 +384,7 @@ export default function StudyPage(): JSX.Element {
         }
       }
 
+      searchTranslationCacheRef.current.set(cacheKey, baseResults);
       setSearchResults(baseResults);
     } catch {
       setSearchError("Network error — is the FastAPI server running?");
@@ -380,7 +414,7 @@ export default function StudyPage(): JSX.Element {
       <select
         aria-label="Language"
         value={language}
-        onChange={(e) => translateTo(e.target.value as LanguageCode)}
+        onChange={(e) => void handleLanguageChange(e.target.value as LanguageCode)}
         className="h-9 rounded-full border border-zinc-800 bg-zinc-950 px-4 py-2 text-sm text-white outline-none transition-colors hover:border-zinc-600 focus:border-zinc-600"
       >
         {LANGUAGE_OPTIONS.map((opt) => (
@@ -619,7 +653,7 @@ export default function StudyPage(): JSX.Element {
                           onKeyDown={(e) => {
                             if (e.key === "Enter") {
                               e.preventDefault();
-                              runSearch();
+                              void handleSearch(searchQuery);
                             }
                           }}
                           placeholder="Ask anything about this lecture..."
@@ -627,7 +661,7 @@ export default function StudyPage(): JSX.Element {
                         />
                         <button
                           type="button"
-                          onClick={() => runSearch()}
+                          onClick={() => void handleSearch(searchQuery)}
                           className={`${BTN_PRIMARY} min-h-[44px] shrink-0`}
                           disabled={isSearching}
                         >
