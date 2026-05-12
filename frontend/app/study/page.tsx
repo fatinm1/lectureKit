@@ -75,6 +75,40 @@ function getApiBaseUrl(): string {
   return raw && raw.length > 0 ? raw.replace(/\/$/, "") : "http://localhost:8000";
 }
 
+/** POST /search requires a full http(s) URL; session may store only an ID or a short URL. */
+function youtubeUrlForSearchApi(session: LectureSession): string {
+  const raw = (session.youtube_url ?? "").trim();
+  if (/^https?:\/\//i.test(raw)) {
+    return raw;
+  }
+  const id = (session.video_id ?? "").trim();
+  return `https://www.youtube.com/watch?v=${encodeURIComponent(id)}`;
+}
+
+/** Read `results` from FastAPI SearchResponse (same shape as curl). */
+function parseSearchResultsPayload(payload: unknown): SearchResult[] {
+  if (!payload || typeof payload !== "object") return [];
+  const obj = payload as Record<string, unknown>;
+  const raw = obj.results;
+  if (!Array.isArray(raw)) return [];
+  const out: SearchResult[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const row = item as Record<string, unknown>;
+    out.push({
+      text: typeof row.text === "string" ? row.text : String(row.text ?? ""),
+      start: typeof row.start === "number" ? row.start : Number(row.start ?? 0),
+      end: typeof row.end === "number" ? row.end : Number(row.end ?? 0),
+      chunk_index: typeof row.chunk_index === "number" ? row.chunk_index : Number(row.chunk_index ?? 0),
+      relevance_score:
+        typeof row.relevance_score === "number" && Number.isFinite(row.relevance_score)
+          ? row.relevance_score
+          : Number(row.relevance_score ?? 0),
+    });
+  }
+  return out;
+}
+
 function isActivationKey(key: string): boolean {
   return key === "Enter" || key === " " || key === "Spacebar";
 }
@@ -309,6 +343,7 @@ export default function StudyPage(): JSX.Element {
     try {
       const cachedForLang = searchTranslationCacheRef.current.get(cacheKey);
       if (cachedForLang) {
+        console.log("[Study] Search results (cache):", cachedForLang);
         setSearchResults(cachedForLang);
         setLastQuery(q);
         return;
@@ -320,12 +355,9 @@ export default function StudyPage(): JSX.Element {
         const response = await fetch(endpoint, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ youtube_url: s.youtube_url, query: q }),
+          body: JSON.stringify({ youtube_url: youtubeUrlForSearchApi(s), query: q }),
         });
-        const payload = (await response.json().catch(() => null)) as
-          | { results: SearchResult[] }
-          | { detail?: string }
-          | null;
+        const payload = (await response.json().catch(() => null)) as { results?: unknown; detail?: string } | null;
 
         if (!response.ok) {
           const message =
@@ -337,14 +369,15 @@ export default function StudyPage(): JSX.Element {
           return;
         }
 
-        const results = payload && typeof payload === "object" && "results" in payload ? payload.results : [];
-        baseResults = Array.isArray(results) ? [...results] : [];
+        const parsed = parseSearchResultsPayload(payload);
+        baseResults = parsed.length > 0 ? [...parsed] : [];
         searchTranslationCacheRef.current.set(englishCacheKey, baseResults);
       }
 
+      const hits: SearchResult[] = Array.isArray(baseResults) ? baseResults : [];
       setLastQuery(q);
 
-      if (effectiveLanguage !== "en" && baseResults.length > 0) {
+      if (effectiveLanguage !== "en" && hits.length > 0) {
         const option = LANGUAGE_OPTIONS.find((o) => o.code === effectiveLanguage);
         if (option?.target) {
           setIsTranslatingSearchResults(true);
@@ -354,7 +387,7 @@ export default function StudyPage(): JSX.Element {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
-                content: { search_results: baseResults.map((r) => r.text) },
+                content: { search_results: hits.map((r) => r.text) },
                 target_language: option.target,
               }),
             });
@@ -365,14 +398,15 @@ export default function StudyPage(): JSX.Element {
             if (
               tResp.ok &&
               Array.isArray(translatedTexts) &&
-              translatedTexts.length === baseResults.length &&
+              translatedTexts.length === hits.length &&
               translatedTexts.every((t) => typeof t === "string")
             ) {
-              const merged = baseResults.map((r: SearchResult, i: number) => ({
+              const merged = hits.map((r: SearchResult, i: number) => ({
                 ...r,
                 text: translatedTexts[i] as string,
               }));
               searchTranslationCacheRef.current.set(cacheKey, merged);
+              console.log("[Study] Search results (translated):", merged);
               setSearchResults(merged);
               return;
             }
@@ -384,8 +418,9 @@ export default function StudyPage(): JSX.Element {
         }
       }
 
-      searchTranslationCacheRef.current.set(cacheKey, baseResults);
-      setSearchResults(baseResults);
+      searchTranslationCacheRef.current.set(cacheKey, hits);
+      console.log("[Study] Search results:", hits);
+      setSearchResults(hits);
     } catch {
       setSearchError("Network error — is the FastAPI server running?");
       setSearchResults([]);
@@ -642,7 +677,7 @@ export default function StudyPage(): JSX.Element {
 
               {rightTab === "search" ? (
                 <div className="flex flex-col gap-6">
-                  {!session.indexed ? (
+                  {!baseSession.indexed ? (
                     <p className="text-sm text-zinc-500">Search is not available for this lecture.</p>
                   ) : (
                     <>
@@ -692,8 +727,8 @@ export default function StudyPage(): JSX.Element {
                       {searchError ? <p className="text-sm text-[#e53e3e]">{searchError}</p> : null}
 
                       {searchResults.length > 0 ? (
-                        <MarketingScrollReveal>
-                          <ul className="divide-y divide-white/5 rounded-xl border border-white/5 bg-zinc-900/50 transition-colors hover:border-white/10">
+                        <div className="rounded-xl border border-white/5 bg-zinc-900/50 transition-colors hover:border-white/10">
+                          <ul className="divide-y divide-white/5">
                             {searchResults.slice(0, 3).map((r, idx) => {
                               const pct = Math.round(Math.max(0, Math.min(1, r.relevance_score)) * 100);
                               return (
@@ -715,7 +750,7 @@ export default function StudyPage(): JSX.Element {
                               );
                             })}
                           </ul>
-                        </MarketingScrollReveal>
+                        </div>
                       ) : null}
                     </>
                   )}
