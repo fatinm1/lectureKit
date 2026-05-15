@@ -16,6 +16,7 @@ Data flow: Consumes Transcript Agent chunks; serves `/search` or dashboard.
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Sequence
@@ -75,6 +76,17 @@ class SearchAgent:
         self._persist_dir.mkdir(parents=True, exist_ok=True)
         self.client = chromadb.PersistentClient(path=str(self._persist_dir))
 
+    def _sanitize_collection_name(self, video_id: str) -> str:
+        """ChromaDB collection names must start/end with alphanumeric; YouTube IDs may not."""
+        sanitized = re.sub(r"[^a-zA-Z0-9._-]", "_", video_id)
+        if sanitized and not sanitized[0].isalnum():
+            sanitized = "v" + sanitized
+        if sanitized and not sanitized[-1].isalnum():
+            sanitized = sanitized + "0"
+        while len(sanitized) < 3:
+            sanitized = sanitized + "0"
+        return sanitized
+
     def index_chunks(self, video_id: str, chunks: Sequence[TranscriptChunk]) -> bool:
         """
         Index transcript chunks into ChromaDB for a given video.
@@ -92,10 +104,12 @@ class SearchAgent:
         if not chunks:
             raise SearchAgentError("No chunks provided for indexing.")
 
-        if self._collection_exists(video_id):
+        collection_name = self._sanitize_collection_name(video_id.strip())
+
+        if self._collection_exists(collection_name):
             return True
 
-        collection = self.client.get_or_create_collection(name=video_id)
+        collection = self.client.get_or_create_collection(name=collection_name)
 
         texts = [c.text for c in chunks]
         embeddings = self.model.encode(texts, show_progress_bar=False, normalize_embeddings=True)
@@ -141,10 +155,12 @@ class SearchAgent:
         if n_results <= 0:
             raise SearchAgentError("n_results must be >= 1.")
 
-        if not self._collection_exists(video_id):
+        collection_name = self._sanitize_collection_name(video_id.strip())
+
+        if not self._collection_exists(collection_name):
             raise SearchAgentError("Collection not found for video_id (video not processed yet).")
 
-        collection = self.client.get_collection(name=video_id)
+        collection = self.client.get_collection(name=collection_name)
         q_embedding = self.model.encode([query.strip()], show_progress_bar=False, normalize_embeddings=True)[0]
 
         res = collection.query(
