@@ -35,7 +35,7 @@ class TranslateAgent:
         self,
         *,
         model: str | None = None,
-        max_tokens: int = 16000,
+        max_tokens: int = 4000,
     ) -> None:
         api_key = (os.getenv("ANTHROPIC_API_KEY") or "").strip()
         if not api_key:
@@ -55,6 +55,7 @@ class TranslateAgent:
             raise TranslateAgentError("target_language must be a non-empty string.")
 
         target = target_language.strip()
+        content = self._prepare_content_for_translation(content)
 
         # Attempt 1: single-call translation (fast path).
         try:
@@ -122,6 +123,23 @@ class TranslateAgent:
 
         merged["search_results"] = [str(x) for x in raw_in]
         return merged
+
+    def _truncate_full_summary(self, text: str, max_words: int = 1500) -> str:
+        words = text.split()
+        if len(words) <= max_words:
+            return text
+        return " ".join(words[:max_words]) + "..."
+
+    def _prepare_content_for_translation(self, content: Dict[str, Any]) -> Dict[str, Any]:
+        prepared = dict(content)
+        if isinstance(prepared.get("summary_full"), str):
+            prepared["summary_full"] = self._truncate_full_summary(prepared["summary_full"])
+        summaries = prepared.get("summaries")
+        if isinstance(summaries, dict) and isinstance(summaries.get("full"), str):
+            summaries_copy = dict(summaries)
+            summaries_copy["full"] = self._truncate_full_summary(summaries_copy["full"])
+            prepared["summaries"] = summaries_copy
+        return prepared
 
     def _build_prompt(self, *, content: Dict[str, Any], target_language: str) -> str:
         payload = json.dumps(content, ensure_ascii=False)

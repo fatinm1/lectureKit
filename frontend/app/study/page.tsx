@@ -263,11 +263,27 @@ export default function StudyPage(): JSX.Element {
         flashcards: baseSession.flashcards,
       };
       const requestBody = { content, target_language: option.target };
-      const response = await fetch(endpoint, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(requestBody),
-      });
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 45000);
+      let response: Response;
+      try {
+        response = await fetch(endpoint, {
+          method: "POST",
+          signal: controller.signal,
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(requestBody),
+        });
+        clearTimeout(timeoutId);
+      } catch (err: unknown) {
+        clearTimeout(timeoutId);
+        if (err instanceof Error && err.name === "AbortError") {
+          setTranslateError("Translation timed out — please try again");
+          setLanguage("en");
+          setSession(baseSession);
+          return "en";
+        }
+        throw err;
+      }
       const payload = (await response.json().catch(() => null)) as { content?: unknown; detail?: string } | null;
       if (!response.ok) {
         setTranslateError("Translation failed. Showing English content.");
