@@ -19,11 +19,13 @@ import traceback
 from typing import Optional
 from urllib.parse import urlparse
 
+from budget import AIBudgetMiddleware
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from starlette.concurrency import run_in_threadpool
 
 from agents.content_agent import ContentAgent, ContentAgentError
 from agents.faculty_agent import FacultyAgent, FacultyAgentError
@@ -73,6 +75,8 @@ app = FastAPI(
     version="0.1.0",
     description="Multi-agent lecture → study environment backend",
 )
+
+app.add_middleware(AIBudgetMiddleware, paths=['/process', '/faculty', '/provost', '/translate'])
 
 # Step: Return a concise, user-friendly 422 instead of a large Pydantic error tree.
 @app.exception_handler(RequestValidationError)
@@ -245,7 +249,7 @@ async def faculty_report(request: Request) -> dict:
         raise HTTPException(status_code=422, detail=f"Invalid YouTube URL: {str(exc)}") from exc
 
     try:
-        _, chunks = transcript_agent.process(youtube_url)
+        _, chunks = await run_in_threadpool(transcript_agent.process, youtube_url)
     except InvalidYouTubeUrlError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except TranscriptUnavailableError as exc:
@@ -256,7 +260,7 @@ async def faculty_report(request: Request) -> dict:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     try:
-        report = get_faculty_agent().generate_report(chunks, video_id)
+        report = await run_in_threadpool(get_faculty_agent().generate_report, chunks, video_id)
     except FacultyAgentError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     except Exception as exc:
@@ -300,7 +304,7 @@ async def provost_report(request: Request) -> dict:
             continue
         try:
             video_id = extract_youtube_video_id(url)
-            _, chunks = transcript_agent.process(url)
+            _, chunks = await run_in_threadpool(transcript_agent.process, url)
             lectures.append(
                 {
                     "video_id": video_id,
@@ -317,7 +321,7 @@ async def provost_report(request: Request) -> dict:
         )
 
     try:
-        curriculum_map = get_provost_agent().generate_curriculum_map(lectures, learning_objectives)
+        curriculum_map = await run_in_threadpool(get_provost_agent().generate_curriculum_map, lectures, learning_objectives)
     except ProvostAgentError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
