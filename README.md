@@ -276,3 +276,11 @@ lectureKit/
 ---
 
 Built by **Fatin Mojumder**.
+
+## Verification and operating limits
+
+Run `cd backend && python -m pytest tests -q` for offline parser, repair, schema-rejection, and URL tests; no model calls or weights are required. The existing frontend smoke script expects a running frontend/backend and can call the configured model, so it is separate from free offline CI.
+
+The multi-agent design is a staged application workflow, not a guarantee of autonomous reasoning or factual correctness. Retrieval latency is not a retrieval-quality score. Evaluate timestamp grounding and retrieval on a labeled set before claiming accuracy. Public demo operators should enforce authenticated usage quotas, concurrency limits, retention policies, and cost monitoring before accepting untrusted workloads at scale. Faculty/curriculum routes offload synchronous work so it does not block the async event loop.
+
+Public AI routes have a per-process rolling budget (default 10 starts/minute, 2 concurrent). Configure `AI_REQUESTS_PER_MINUTE` and `AI_MAX_CONCURRENT` explicitly for the deployment. Rejected requests return 429 without starting provider work. This intentionally bounds the whole demo, not individual identities; multi-worker deployments need a shared external quota and authentication.
