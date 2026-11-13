@@ -1,5 +1,13 @@
 # LectureKit
 
+## 60-second demo
+
+[![Watch the LectureKit demo](https://github.com/fatinm1/lectureKit/releases/download/demo-v1/LectureKit-Thumbnail.jpg)](https://github.com/fatinm1/lectureKit/releases/tag/demo-v1)
+
+**[Watch or download the demo](https://github.com/fatinm1/lectureKit/releases/download/demo-v1/LectureKit-Demo.mp4)** · 60 seconds · American English narration
+
+See how a YouTube lecture becomes an outline, summaries, semantic search, flashcards, and translated study material.
+
 **Turn any YouTube lecture into intelligence — instantly.**
 
 LectureKit is a multi-agent AI system built for the **Cloudforce Frontier Internship Hackathon**. Paste any public YouTube lecture URL and get a complete study environment, a private faculty audit, or a curriculum coverage map — powered by six distinct AI agents.
