@@ -2,7 +2,11 @@
 
 ## 60-second demo
 
-[![Watch the LectureKit demo](https://github.com/fatinm1/lectureKit/releases/download/demo-v1/LectureKit-Thumbnail.jpg)](https://github.com/fatinm1/lectureKit/releases/tag/demo-v1)
+
+
+https://github.com/user-attachments/assets/995f1709-85bb-4c6b-8cf3-573899152b49
+
+
 
 **[Watch or download the demo](https://github.com/fatinm1/lectureKit/releases/download/demo-v1/LectureKit-Demo.mp4)** · 60 seconds · American English narration
 
