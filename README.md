@@ -8,7 +8,7 @@ https://github.com/user-attachments/assets/995f1709-85bb-4c6b-8cf3-573899152b49
 
 
 
-**[Watch or download the demo](https://github.com/fatinm1/lectureKit/releases/download/demo-v1/LectureKit-Demo.mp4)** · 60 seconds · American English narration
+**[Watch or download the demo](https://github.com/fatinm1/lectureKit/releases/download/demo-v1/LectureKit-Demo.mp4)** · 60 seconds
 
 See how a YouTube lecture becomes an outline, summaries, semantic search, flashcards, and translated study material.
 
