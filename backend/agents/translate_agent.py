@@ -26,6 +26,10 @@ class TranslateAgentError(Exception):
     """Raised for any TranslateAgent failure with a clear descriptive message."""
 
 
+class TranslateParseError(TranslateAgentError):
+    """Claude answered, but the output was not usable JSON (usually truncated)."""
+
+
 class TranslateAgent:
     """
     Translate structured study materials to a target language.
@@ -62,8 +66,9 @@ class TranslateAgent:
             raw = self._call_claude(prompt)
             parsed = self._parse_json_with_retry(raw, content=content, target_language=target)
             return self._normalize_search_results_in_output(content, parsed)
-        except Exception:
+        except TranslateParseError:
             # Attempt 2 (fallback): split into two calls to reduce output size and avoid truncation.
+            # Only for unusable output; API/auth errors propagate so a failure isn't paid for twice.
             merged = self._translate_split(content=content, target_language=target)
             return self._normalize_search_results_in_output(content, merged)
 
@@ -177,7 +182,7 @@ class TranslateAgent:
             try:
                 return self._parse_json_response(repaired)
             except Exception as exc:
-                raise TranslateAgentError(
+                raise TranslateParseError(
                     "Claude returned malformed JSON after one repair retry. Raw response:\n" + raw_text
                 ) from exc
 
@@ -198,7 +203,7 @@ class TranslateAgent:
             parsed = json.loads(cleaned)
             if isinstance(parsed, dict):
                 return parsed
-            raise TranslateAgentError("Claude returned JSON but not an object.")
+            raise TranslateParseError("Claude returned JSON but not an object.")
         except json.JSONDecodeError:
             pass
 
@@ -210,7 +215,7 @@ class TranslateAgent:
                 parsed = json.loads(cleaned[start : end + 1])
                 if isinstance(parsed, dict):
                     return parsed
-                raise TranslateAgentError("Claude returned JSON but not an object.")
+                raise TranslateParseError("Claude returned JSON but not an object.")
             except json.JSONDecodeError:
                 pass
 
@@ -219,7 +224,7 @@ class TranslateAgent:
             parsed = json.loads(raw.strip())
             if isinstance(parsed, dict):
                 return parsed
-            raise TranslateAgentError("Claude returned JSON but not an object.")
+            raise TranslateParseError("Claude returned JSON but not an object.")
         except json.JSONDecodeError:
             pass
 
@@ -230,11 +235,11 @@ class TranslateAgent:
                 parsed = json.loads(raw[start : end + 1])
                 if isinstance(parsed, dict):
                     return parsed
-                raise TranslateAgentError("Claude returned JSON but not an object.")
+                raise TranslateParseError("Claude returned JSON but not an object.")
             except json.JSONDecodeError:
                 pass
 
-        raise TranslateAgentError(
+        raise TranslateParseError(
             "Could not parse JSON after all strategies. "
             f"First 300 chars of response: {raw[:300]}"
         )

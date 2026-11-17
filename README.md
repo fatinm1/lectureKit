@@ -62,7 +62,7 @@ A provost pastes multiple lecture URLs and their course learning objectives and 
 
 - Fetches transcript via **Supadata API** (primary — handles YouTube bot detection on cloud servers)
 - Falls back to **yt-dlp** with multi-proxy support
-- Cleans text: strips filler words, HTML tags, collapses whitespace, deduplicates consecutive phrases
+- Cleans text: strips disfluencies (um/uh), HTML tags, collapses whitespace, deduplicates consecutive phrases
 - Chunks into ~500-word segments with precise timestamps
 - Validates video ID format before attempting fetch to fail fast on invalid URLs
 
@@ -76,7 +76,7 @@ A provost pastes multiple lecture URLs and their course learning objectives and 
 ### Agent 3 — Search Agent
 
 - Embeds transcript chunks **locally** using `sentence-transformers` `all-MiniLM-L6-v2`
-- Stores vectors in **persistent ChromaDB** (one collection per video_id)
+- Stores vectors in **ChromaDB** with cosine distance (one collection per video_id)
 - Skips reindexing if collection already exists
 - Under 0.02s search latency across 142-chunk corpora
 
@@ -84,7 +84,7 @@ A provost pastes multiple lecture URLs and their course learning objectives and 
 
 - Translates outline, summaries, and flashcards via **Claude Sonnet**
 - Supports English, Spanish, French, Bengali, Arabic
-- Splits large payloads into two Claude calls to avoid token limits
+- Falls back to two smaller Claude calls only when the single-call output is truncated or unparseable
 - Frontend caches translations per language in component state
 
 ### Agent 5 — Faculty Agent
@@ -150,7 +150,7 @@ Agent 2 and Agent 3 run in parallel in Student mode. Agent 4 (Translation) runs 
 | Backend | FastAPI, Python 3.11, uvicorn |
 | LLM | Claude Sonnet — claude-sonnet-4-6 |
 | Embeddings | sentence-transformers all-MiniLM-L6-v2 (local) |
-| Vector Store | ChromaDB (persistent, /tmp/chroma_db on Railway) |
+| Vector Store | ChromaDB (`CHROMA_DB_PATH`; `/tmp` on Railway is wiped on redeploy, so mount a volume) |
 | Transcript | Supadata API (primary) + yt-dlp (fallback) |
 | Deployment | Vercel (frontend) + Railway EU West (backend) |
 
@@ -182,6 +182,16 @@ cp .env.example .env
 # Add your ANTHROPIC_API_KEY and SUPADATA_API_KEY to .env
 uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
+
+### Tests
+
+```bash
+cd backend
+pip install pytest
+python -m pytest -q
+```
+
+No API keys or network needed: Claude, transcript fetching and the embedding model are mocked.
 
 ### Frontend
 
@@ -230,7 +240,7 @@ npm run dev
 | POST | /faculty | Faculty audit report |
 | POST | /provost | Provost curriculum map (multiple URLs) |
 
-All endpoints have explicit OPTIONS handlers for CORS preflight.
+CORS preflight is handled by FastAPI's `CORSMiddleware` using `CORS_ORIGINS`.
 
 ---
 
@@ -239,7 +249,7 @@ All endpoints have explicit OPTIONS handlers for CORS preflight.
 ```
 lectureKit/
 ├── backend/
-│   ├── main.py                   # FastAPI app, all endpoints, CORS, OPTIONS handlers
+│   ├── main.py                   # FastAPI app, all endpoints, CORS
 │   ├── agents/
 │   │   ├── transcript_agent.py   # Agent 1: Supadata + yt-dlp + clean + chunk
 │   │   ├── content_agent.py      # Agent 2: Claude outline + summaries + flashcards
@@ -249,6 +259,7 @@ lectureKit/
 │   │   └── provost_agent.py      # Agent 6: curriculum map
 │   ├── models/
 │   │   └── schemas.py            # Pydantic request/response models
+│   ├── tests/                    # pytest suite (Claude, transcripts, embeddings mocked)
 │   └── requirements.txt
 └── frontend/
     └── app/
@@ -263,10 +274,11 @@ lectureKit/
         │   │   ├── ProcessUrlPanel.tsx      # Main input + mode toggle
         │   │   ├── AppWorkspaceNavbar.tsx   # Shared navbar
         │   │   └── AppSubpageHeader.tsx     # Back arrow + page title
-        │   ├── marketing/                   # Landing page components
-        │   └── shared/
-        └── types/
-            └── lecture.ts        # All TypeScript types
+        │   └── marketing/                   # Landing page components
+    ├── types/
+    │   └── lecture.ts            # All TypeScript types
+    └── utils/
+        └── format.ts             # Timestamp formatting
 ```
 
 ---
@@ -277,13 +289,15 @@ lectureKit/
 
 **Local embeddings:** sentence-transformers all-MiniLM-L6-v2 runs locally on Railway with no external API cost, no rate limits, and under 0.02s search latency after indexing.
 
-**Parallel agent execution:** In Student mode, Agent 2 (Content) and Agent 3 (Search) run in parallel from Agent 1's output — not sequentially. This reduces total processing time.
+**Parallel agent execution:** In Student mode, Agent 2 (Content, network-bound on Claude) and Agent 3 (Search indexing, CPU-bound embeddings) run concurrently in a thread pool once Agent 1's chunks are ready, so total time is max(content, indexing) instead of the sum.
+
+**Non-blocking endpoints:** Every endpoint that calls a blocking agent is a plain `def`, so FastAPI runs it in its threadpool. An `async def` endpoint calling blocking code would freeze the event loop for every other user (a regression test guards this).
 
 **localStorage session management:** Results are stored in localStorage immediately after the API response. Output pages read from localStorage on mount. No database required for hackathon scope.
 
 **YouTube seekTo:** Every timestamp in the app seeks the embedded YouTube player using the iframe postMessage API with enablejsapi=1 and the page origin in the embed URL.
 
-**4-strategy JSON parser:** Claude occasionally wraps responses in markdown fences or adds preamble text. The parser tries: strip fences → extract outermost braces → raw loads → raise with first 200 chars.
+**4-strategy JSON parser:** Claude occasionally wraps responses in markdown fences or adds preamble text. The parser tries: strip fences → extract outermost braces → raw loads → raise with first 200 chars. If all fail, one repair call sends back only the broken output (not the whole transcript).
 
 ---
 
@@ -291,8 +305,8 @@ Built by **Fatin Mojumder**.
 
 ## Verification and operating limits
 
-Run `cd backend && python -m pytest tests -q` for offline parser, repair, schema-rejection, and URL tests; no model calls or weights are required. The existing frontend smoke script expects a running frontend/backend and can call the configured model, so it is separate from free offline CI.
+Run `cd backend && python -m pytest -q` for the offline suite (parser, repair, schema rejection, URLs, cleaning, search ranking, API concurrency); Claude, transcripts and the embedding model are mocked. The existing frontend smoke script expects a running frontend/backend and can call the configured model, so it is separate from free offline CI.
 
-The multi-agent design is a staged application workflow, not a guarantee of autonomous reasoning or factual correctness. Retrieval latency is not a retrieval-quality score. Evaluate timestamp grounding and retrieval on a labeled set before claiming accuracy. Public demo operators should enforce authenticated usage quotas, concurrency limits, retention policies, and cost monitoring before accepting untrusted workloads at scale. Faculty/curriculum routes offload synchronous work so it does not block the async event loop.
+The multi-agent design is a staged application workflow, not a guarantee of autonomous reasoning or factual correctness. Retrieval latency is not a retrieval-quality score. Evaluate timestamp grounding and retrieval on a labeled set before claiming accuracy. Public demo operators should enforce authenticated usage quotas, concurrency limits, retention policies, and cost monitoring before accepting untrusted workloads at scale. Faculty/curriculum routes are plain `def` endpoints, so FastAPI runs their blocking work in its threadpool instead of on the event loop.
 
 Public AI routes have a per-process rolling budget (default 10 starts/minute, 2 concurrent). Configure `AI_REQUESTS_PER_MINUTE` and `AI_MAX_CONCURRENT` explicitly for the deployment. Rejected requests return 429 without starting provider work. This intentionally bounds the whole demo, not individual identities; multi-worker deployments need a shared external quota and authentication.

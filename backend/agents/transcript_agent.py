@@ -109,6 +109,10 @@ TERMINAL_ERROR_KEYWORDS = (
 )
 
 
+# Word-boundary match so errors mentioning e.g. "delivered" or "alive" aren't misread as livestreams.
+_LIVESTREAM_RE = re.compile(r"\b(live ?stream|live event|is live|premiere)")
+
+
 def is_terminal_error(message: str) -> bool:
     msg_lower = message.lower()
     return any(keyword in msg_lower for keyword in TERMINAL_ERROR_KEYWORDS)
@@ -140,7 +144,7 @@ def user_friendly_transcript_failure_message(
 
     combined = " ".join(parts).lower()
 
-    if "premiere" in combined or "is live" in combined or "live" in combined:
+    if _LIVESTREAM_RE.search(combined):
         return USER_FRIENDLY_MSG_LIVESTREAM
     if (
         "private" in combined
@@ -167,14 +171,13 @@ class _WordTime:
     time_s: float
 
 
+# Only pure disfluencies. Words like "like", "actually", "you know" carry meaning
+# ("looks like a tree", "do you know why") and must survive cleaning.
 _FILLER_WORDS = (
     "um",
     "uh",
-    "you know",
-    "like",
-    "basically",
-    "actually",
-    "literally",
+    "uhm",
+    "erm",
 )
 
 
@@ -635,19 +638,6 @@ class TranscriptAgent:
             raise TranscriptUnavailableError(user_friendly_transcript_failure_message(exc=last_exc)) from last_exc
         raise TranscriptUnavailableError(USER_FRIENDLY_MSG_TRANSCRIPT_GENERIC)
 
-    def _youtube_api_get_transcript(
-        self,
-        video_id: str,
-        proxies: dict[str, str] | None,
-        cookies_path: str | None,
-    ) -> list[dict]:
-        """youtube-transcript-api: get_transcript with optional proxies and Netscape cookies file."""
-        return YouTubeTranscriptApi.get_transcript(
-            video_id,
-            ("en", "en-US", "en-GB"),
-            proxies=proxies,
-            cookies=cookies_path,
-        )
 
     def _youtube_api_list_transcripts_fetch(
         self,
@@ -1008,7 +998,7 @@ class TranscriptAgent:
         Normalize transcript text to a clean, model-ready surface.
 
         Cleaning rules:
-        - Remove filler words: um, uh, you know, like, basically, actually, literally
+        - Remove pure disfluencies (um, uh, uhm, erm); meaningful words are kept
         - Strip HTML tags
         - Collapse newlines/whitespace
         - Collapse immediate duplicate sentences/phrases (common caption artifact)
@@ -1114,7 +1104,3 @@ class TranscriptAgent:
         stripped = token.rstrip(")]}\"'”’")
         return stripped.endswith((".", "?", "!"))
 
-
-def run_transcript_agent_placeholder() -> None:
-    """Backward-compatible placeholder kept for older imports; not used in Part 2."""
-    return None

@@ -5,7 +5,7 @@ Part 4: Local embeddings + persistent vector search.
 
 Key decisions (per requirements):
 - Embeddings run locally using `sentence-transformers` with `all-MiniLM-L6-v2`
-- Vectors are stored in ChromaDB using a persistent directory: `backend/chroma_db`
+- Vectors are stored in ChromaDB under CHROMA_DB_PATH (default `./chroma_db`)
 - Each YouTube video gets its own ChromaDB collection named by `video_id`
 - If a collection already exists, we reuse it and skip re-indexing
 - Search returns the top 3 most relevant chunks with timestamps
@@ -22,7 +22,6 @@ from pathlib import Path
 from typing import Any, Dict, List, Sequence
 
 import chromadb
-from chromadb.api.models.Collection import Collection
 from sentence_transformers import SentenceTransformer
 
 from models.schemas import TranscriptChunk
@@ -109,7 +108,9 @@ class SearchAgent:
         if self._collection_exists(collection_name):
             return True
 
-        collection = self.client.get_or_create_collection(name=collection_name)
+        collection = self.client.get_or_create_collection(
+            name=collection_name, metadata={"hnsw:space": "cosine"}
+        )
 
         texts = [c.text for c in chunks]
         embeddings = self.model.encode(texts, show_progress_bar=False, normalize_embeddings=True)
@@ -173,14 +174,18 @@ class SearchAgent:
         metadatas = (res.get("metadatas") or [[]])[0]
         distances = (res.get("distances") or [[]])[0]
 
+        # Step: Convert Chroma distance back to cosine similarity, then clamp to [0, 1].
+        # Embeddings are unit-normalized, so:
+        #   cosine space: d = 1 - cos          -> cos = 1 - d
+        #   l2 space (Chroma default, squared): d = 2 - 2cos -> cos = 1 - d / 2
+        # Collections created before cosine was set explicitly use l2.
+        space = (collection.metadata or {}).get("hnsw:space", "l2")
+
         hits: List[SearchHit] = []
         for doc, meta, dist in zip(documents, metadatas, distances):
-            # Step: Convert distance to a bounded relevance score.
-            # For normalized embeddings, distance is typically cosine distance.
-            # We map any non-negative distance into (0,1] via 1/(1+d), then clamp to [0,1].
             d = float(dist) if dist is not None else 0.0
-            score = 1.0 / (1.0 + max(d, 0.0))
-            score = max(0.0, min(1.0, score))
+            cos = 1.0 - d if space == "cosine" else 1.0 - d / 2.0
+            score = max(0.0, min(1.0, cos))
 
             hits.append(
                 SearchHit(
@@ -204,12 +209,3 @@ class SearchAgent:
         except Exception:
             return False
 
-
-def run_search_agent_placeholder() -> None:
-    """
-    Placeholder for embedding + vector retrieval.
-
-    Inputs/outputs: Defined in a later part; no-op in Part 1.
-    """
-    # Step: Reserved for embeddings + ChromaDB wiring.
-    return None
