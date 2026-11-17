@@ -1,0 +1,24 @@
+# Local infrastructure for LectureKit.
+#
+#   docker compose up -d          # start Redis
+#   cd backend && REDIS_URL=redis://localhost:6379 uvicorn main:app --reload
+#   cd frontend && npm run dev
+#
+# The API runs the background-job worker in-process (RUN_WORKER_IN_PROCESS=true), so Redis is
+# the only extra service for now. Postgres + pgvector join this file with roadmap item #3.
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  redis-data:

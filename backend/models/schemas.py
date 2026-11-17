@@ -1,18 +1,13 @@
 """
 Purpose: Shared Pydantic request/response models for the FastAPI layer.
 
-Agents & data flow (future parts):
-- Transcript Agent, Content Agent, and Search Agent will populate richer
-  response payloads once orchestration is wired. Part 1 only validates
-  incoming URLs for `/process` and returns an acknowledgement JSON.
-
-This module is imported by `main.py` for request bodies and can be extended
-by agent modules as pipelines stabilize.
+Imported by `main.py` for request/response bodies and by the agents for the
+shared TranscriptChunk / OutlineItem / Flashcard types.
 """
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from pydantic import BaseModel, Field, HttpUrl
 
@@ -24,6 +19,19 @@ class ProcessYouTubeRequest(BaseModel):
         ...,
         description="Full YouTube watch or youtu.be URL for the lecture.",
     )
+
+
+class FacultyRequest(BaseModel):
+    """Payload for POST `/faculty`: a single lecture URL to audit."""
+
+    youtube_url: str = Field(..., description="Full YouTube watch or youtu.be URL for the lecture.")
+
+
+class ProvostRequest(BaseModel):
+    """Payload for POST `/provost`: up to 10 lecture URLs plus the course learning objectives."""
+
+    youtube_urls: List[str] = Field(..., description="YouTube lecture URLs (max 10).")
+    learning_objectives: str = Field(..., description="Course learning objectives, free text.")
 
 
 class TranscriptChunk(BaseModel):
@@ -76,8 +84,8 @@ class ProcessYouTubeResponse(BaseModel):
     """
     Response for POST `/process`.
 
-    Part 2: TranscriptAgent output (video_id + chunks).
-    Part 3: ContentAgent output (outline + summaries + flashcards).
+    TranscriptAgent output (video_id + chunks), ContentAgent output (outline +
+    summaries + flashcards) and whether SearchAgent indexing succeeded.
     """
 
     status: str = Field(..., description="Request outcome status.")
@@ -142,14 +150,3 @@ class TranslateResponse(BaseModel):
 
     content: Dict[str, Any]
 
-
-class ProcessYouTubeError(BaseModel):
-    """
-    Structured error payload for `/process` failures (documented shape).
-
-    Note: FastAPI returns these via HTTPException; this model exists for schema clarity.
-    """
-
-    status: str = Field("error", description="Always 'error' for failure payloads.")
-    message: str = Field(..., description="Human-readable error message.")
-    error_type: Optional[str] = Field(None, description="Machine-friendly error category.")

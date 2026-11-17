@@ -1,8 +1,6 @@
 """
 Purpose: Agent 2 — Content Agent (chunks → outline, summaries, flashcards).
 
-Part 3: Production implementation using the Anthropic SDK directly (no LangChain).
-
 Responsibilities:
 - Accept a list of TranscriptChunk objects (Agent 1 output)
 - Build a single timestamped transcript string for context
@@ -40,7 +38,7 @@ class ContentAgent:
         self,
         *,
         model: str | None = None,
-        max_tokens: int = 4000,
+        max_tokens: int = 8000,
     ) -> None:
         """
         Create a ContentAgent with a single shared Anthropic client.
@@ -279,23 +277,15 @@ class ContentAgent:
     def _build_repair_prompt(self, *, transcript: str, bad_output: str) -> str:
         """
         Build a minimal prompt asking Claude to fix JSON formatting only.
+
+        The transcript is intentionally NOT resent: the content is already generated,
+        only its formatting is broken, so resending it would just double input cost.
         """
+        del transcript
         return (
-            "You previously attempted to return JSON but it was invalid.\n"
-            "Return ONLY valid JSON (no markdown, no backticks, no commentary).\n\n"
-            "Transcript (timestamped):\n"
-            f"{transcript}\n\n"
-            "Invalid JSON output:\n"
-            f"{bad_output}\n\n"
-            "Return corrected JSON now."
+            "The following was meant to be a single valid JSON object but it is invalid "
+            "(it may be wrapped in prose or markdown, or truncated).\n"
+            "Return ONLY the corrected, complete JSON object (no markdown, no backticks, no commentary). "
+            "If it was truncated, close the open strings, arrays and objects so it parses.\n\n"
+            f"{bad_output}"
         )
-
-
-def run_content_agent_placeholder() -> None:
-    """
-    Placeholder for Claude-powered content generation.
-
-    Inputs/outputs: Defined in Part 3+; no-op in Part 1.
-    """
-    # Step: Reserved for LangChain + Claude invocation.
-    return None

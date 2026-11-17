@@ -1,14 +1,13 @@
 /**
  * Study dashboard route.
  *
- * Purpose (Step 2):
- * - Read the latest processed lecture session from `localStorage` (`lecturekit_session`)
- * - Redirect to `/app` if missing (dashboard must survive refresh)
- * - Render the three-column responsive layout with the Outline panel (left column)
- *
- * Data flow:
- * - `/app` stores a `LectureSession` in localStorage after `/process` completes
- * - `/study` loads it on mount and renders live backend-derived content
+ * Two ways in:
+ * - `/study?job=<id>` (background jobs): `/app` navigates here as soon as the transcript is
+ *   ready. The page subscribes to the job's event stream (replayed from the start, so a refresh
+ *   mid-job works) and fills in the video, search, outline, summaries and flashcards as each
+ *   event arrives. On `done` the full session is saved to localStorage like before.
+ * - `/study` (no job): read the last finished session from localStorage (`lecturekit_session`),
+ *   redirecting to `/app` if there is none.
  */
 
 "use client";
@@ -21,6 +20,43 @@ import { MarketingScrollReveal } from "../components/marketing/MarketingScrollRe
 
 import type { LectureSession } from "../../types/lecture";
 import { formatTimestamp } from "../../utils/format";
+import { fetchJob, subscribeToJob, type StudentResult } from "../../utils/jobs";
+
+type PendingSections = { outline: boolean; summaries: boolean; flashcards: boolean; index: boolean };
+
+const NOTHING_PENDING: PendingSections = { outline: false, summaries: false, flashcards: false, index: false };
+const ALL_PENDING: PendingSections = { outline: true, summaries: true, flashcards: true, index: true };
+
+function emptySession(): LectureSession {
+  return {
+    video_id: "",
+    youtube_url: "",
+    chunk_count: 0,
+    outline: [],
+    summary_90s: "",
+    summary_5min: "",
+    summary_full: "",
+    flashcards: [],
+    indexed: false,
+    processed_at: new Date().toISOString(),
+  };
+}
+
+function sessionFromResult(result: StudentResult): LectureSession {
+  return { ...result, processed_at: new Date().toISOString() };
+}
+
+function PendingNote({ label }: { label: string }): JSX.Element {
+  return (
+    <div className="flex items-center gap-2 py-3 text-sm text-zinc-500">
+      <span
+        aria-hidden
+        className="inline-block h-3.5 w-3.5 shrink-0 rounded-full border-2 border-white/15 border-t-[#5e6ad2] motion-safe:animate-spin motion-reduce:animate-none"
+      />
+      <span className="motion-safe:animate-pulse motion-reduce:animate-none">{label}</span>
+    </div>
+  );
+}
 
 type RightTab = "summary" | "flashcards" | "search";
 
@@ -135,6 +171,11 @@ export default function StudyPage(): JSX.Element {
   const [isTranslating, setIsTranslating] = useState(false);
   const [translateError, setTranslateError] = useState<string | null>(null);
 
+  const [pending, setPending] = useState<PendingSections>(NOTHING_PENDING);
+  const [jobError, setJobError] = useState<string | null>(null);
+  const [readyIn, setReadyIn] = useState<number | null>(null);
+  const isBuilding = pending.outline || pending.summaries || pending.flashcards || pending.index;
+
   const translationCacheRef = useRef<Map<LanguageCode, Partial<LectureSession>>>(new Map());
   const searchTranslationCacheRef = useRef<Map<string, SearchResult[]>>(new Map());
   const playerRef = useRef<HTMLIFrameElement>(null);
@@ -145,6 +186,86 @@ export default function StudyPage(): JSX.Element {
   }, []);
 
   useEffect(() => {
+    const jobId = new URLSearchParams(window.location.search).get("job");
+
+    if (jobId) {
+      // Live mode: build the session from the job's event stream.
+      let current = emptySession();
+      const apply = (patch: Partial<LectureSession>) => {
+        current = { ...current, ...patch };
+        setBaseSession(current);
+        setSession(current);
+      };
+      const finish = (finalSession: LectureSession) => {
+        apply(finalSession);
+        setPending(NOTHING_PENDING);
+        window.localStorage.setItem("lecturekit_session", JSON.stringify(finalSession));
+        // Later refreshes read localStorage; the job's events expire after 24h.
+        window.history.replaceState(null, "", "/study");
+      };
+      setPending(ALL_PENDING);
+
+      const sub = subscribeToJob(
+        jobId,
+        (event) => {
+          switch (event.type) {
+            case "transcript_fetched":
+              apply({
+                video_id: event.data.video_id,
+                youtube_url: event.data.youtube_url,
+                chunk_count: event.data.chunk_count,
+              });
+              return;
+            case "chunks_indexed":
+              apply({ indexed: event.data.indexed });
+              setPending((p) => ({ ...p, index: false }));
+              return;
+            case "outline_ready":
+              apply({ outline: event.data.outline });
+              setPending((p) => ({ ...p, outline: false }));
+              return;
+            case "summaries_ready":
+              apply({
+                summary_90s: event.data.summary_90s,
+                summary_5min: event.data.summary_5min,
+                summary_full: event.data.summary_full,
+              });
+              setPending((p) => ({ ...p, summaries: false }));
+              return;
+            case "flashcards_ready":
+              apply({ flashcards: event.data.flashcards });
+              setPending((p) => ({ ...p, flashcards: false }));
+              return;
+            case "done": {
+              const timings = event.data.timings ?? {};
+              if (typeof timings.total_s === "number") setReadyIn(timings.total_s);
+              console.log("[LectureKit] job timings (s)", { ...timings, first_content_s: timings.transcript_s });
+              finish(sessionFromResult(event.data.result as StudentResult));
+              return;
+            }
+            case "failed":
+              setPending(NOTHING_PENDING);
+              setJobError(event.data.message || "Processing failed.");
+              return;
+            default:
+              return;
+          }
+        },
+        () => {
+          // Stream unavailable (e.g. job expired). Use the stored result if the job finished.
+          void fetchJob(jobId).then((job) => {
+            if (job?.status === "done" && job.result) {
+              finish(sessionFromResult(job.result as StudentResult));
+            } else {
+              setPending(NOTHING_PENDING);
+              setJobError("Lost connection to the server. Please process the lecture again.");
+            }
+          });
+        }
+      );
+      return () => sub.close();
+    }
+
     const raw = window.localStorage.getItem("lecturekit_session");
     if (!raw) {
       router.replace("/app");
@@ -181,7 +302,7 @@ export default function StudyPage(): JSX.Element {
   }, [session]);
 
   const playerSrc = useMemo(() => {
-    if (!session) return "";
+    if (!session?.video_id) return "";
     return `https://www.youtube.com/embed/${session.video_id}?enablejsapi=1&origin=${embedOrigin}&rel=0`;
   }, [session, embedOrigin]);
 
@@ -430,7 +551,18 @@ export default function StudyPage(): JSX.Element {
     }
   }
 
-  if (!session || !baseSession) {
+  if (jobError && !baseSession?.video_id) {
+    return (
+      <main className="flex min-h-screen flex-col items-center justify-center gap-4 bg-zinc-950 px-6 text-zinc-400">
+        <p className="text-[#e53e3e]">{jobError}</p>
+        <button type="button" onClick={() => router.push("/app")} className={BTN_PRIMARY}>
+          Back to workspace
+        </button>
+      </main>
+    );
+  }
+
+  if (!session || !baseSession || !session.video_id) {
     return (
       <main className="flex min-h-screen items-center justify-center bg-zinc-950 px-6 text-zinc-400">
         <p>Loading session…</p>
@@ -448,9 +580,11 @@ export default function StudyPage(): JSX.Element {
       ) : null}
       <select
         aria-label="Language"
+        disabled={isBuilding}
+        title={isBuilding ? "Translation is available once the study kit is complete" : undefined}
         value={language}
         onChange={(e) => void handleLanguageChange(e.target.value as LanguageCode)}
-        className="h-9 rounded-full border border-zinc-800 bg-zinc-950 px-4 py-2 text-sm text-white outline-none transition-colors hover:border-zinc-600 focus:border-zinc-600"
+        className="h-9 rounded-full border border-zinc-800 bg-zinc-950 px-4 py-2 text-sm text-white outline-none transition-colors hover:border-zinc-600 focus:border-zinc-600 disabled:cursor-not-allowed disabled:opacity-50"
       >
         {LANGUAGE_OPTIONS.map((opt) => (
           <option key={opt.code} value={opt.code}>
@@ -464,6 +598,13 @@ export default function StudyPage(): JSX.Element {
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-200">
       <AppSubpageHeader title="Study dashboard" right={headerRight} />
+      {jobError ? (
+        <div className="border-b border-white/5 bg-zinc-950 px-6 py-2">
+          <div className="mx-auto max-w-[1600px]">
+            <p className="text-xs text-[#e53e3e]">{jobError}</p>
+          </div>
+        </div>
+      ) : null}
       {translateError ? (
         <div className="border-b border-white/5 bg-zinc-950 px-6 py-2">
           <div className="mx-auto max-w-[1600px]">
@@ -476,7 +617,13 @@ export default function StudyPage(): JSX.Element {
         <div className="mx-auto flex max-w-[1600px] flex-col gap-1 px-6 py-3 text-xs text-zinc-500 sm:flex-row sm:items-center sm:justify-between">
           <span className="font-mono text-[#5e6ad2]">video_id: {session.video_id}</span>
           <span>{session.chunk_count} chunks processed</span>
-          <span>Processed {processedLabel}</span>
+          {isBuilding ? (
+            <span className="text-[#5e6ad2] motion-safe:animate-pulse motion-reduce:animate-none">Building study kit…</span>
+          ) : readyIn !== null ? (
+            <span>Study kit ready in {readyIn.toFixed(1)}s</span>
+          ) : (
+            <span>Processed {processedLabel}</span>
+          )}
         </div>
       </div>
 
@@ -485,6 +632,11 @@ export default function StudyPage(): JSX.Element {
           <section className="lg:pr-2">
             <p className="text-xs font-semibold uppercase tracking-widest text-zinc-500">Outline</p>
             <MarketingScrollReveal className="mt-3 rounded-xl border border-white/5 bg-zinc-900/50 p-2 transition-colors hover:border-white/10">
+              {pending.outline && session.outline.length === 0 ? (
+                <div className="px-2">
+                  <PendingNote label="Generating outline…" />
+                </div>
+              ) : null}
               <ul className="max-h-[70vh] divide-y divide-white/5 overflow-auto pr-1">
                 {session.outline.map((item, idx) => {
                   const isActive = idx === activeOutlineIndex;
@@ -560,7 +712,11 @@ export default function StudyPage(): JSX.Element {
                 })}
               </div>
               <div className="mt-6">
-                <p className="whitespace-pre-line text-sm leading-relaxed text-zinc-300">{activeSummary}</p>
+                {pending.summaries ? (
+                  <PendingNote label="Writing summaries…" />
+                ) : (
+                  <p className="whitespace-pre-line text-sm leading-relaxed text-zinc-300">{activeSummary}</p>
+                )}
               </div>
             </div>
           </section>
@@ -603,12 +759,18 @@ export default function StudyPage(): JSX.Element {
                     })}
                   </div>
                   <MarketingScrollReveal className="max-h-[60vh] overflow-auto rounded-xl border border-white/5 bg-zinc-900/50 p-4 pr-2 transition-colors hover:border-white/10">
-                    <p className="whitespace-pre-line text-sm leading-relaxed text-zinc-300">{activeSummary}</p>
+                    {pending.summaries ? (
+                      <PendingNote label="Writing summaries…" />
+                    ) : (
+                      <p className="whitespace-pre-line text-sm leading-relaxed text-zinc-300">{activeSummary}</p>
+                    )}
                   </MarketingScrollReveal>
                 </div>
               ) : null}
 
-              {rightTab === "flashcards" ? (
+              {rightTab === "flashcards" && pending.flashcards ? <PendingNote label="Generating flashcards…" /> : null}
+
+              {rightTab === "flashcards" && !pending.flashcards ? (
                 <div className="flex flex-col gap-6">
                   <p className="text-center text-xs text-zinc-500">
                     Card {cardIndex + 1} of {session.flashcards.length}
@@ -677,7 +839,9 @@ export default function StudyPage(): JSX.Element {
 
               {rightTab === "search" ? (
                 <div className="flex flex-col gap-6">
-                  {!baseSession.indexed ? (
+                  {pending.index ? (
+                    <PendingNote label="Indexing transcript for search…" />
+                  ) : !baseSession.indexed ? (
                     <p className="text-sm text-zinc-500">Search is not available for this lecture.</p>
                   ) : (
                     <>

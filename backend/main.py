@@ -1,86 +1,88 @@
 """
-Purpose: FastAPI application entrypoint for the Cloudforce Frontier study pipeline.
+Purpose: FastAPI application entrypoint for LectureKit.
 
-Agents & data flow:
-- Part 1 exposes `GET /health` and `POST /process`. The latter validates a
-  YouTube URL and returns an acknowledgement JSON. Later parts will invoke
-  Transcript → Content → Search agents in sequence and return full materials.
+Endpoints:
+- GET  /health     liveness probe
+- POST /process    Student mode: Transcript -> (Content || Search indexing)
+- POST /search     semantic search over a processed video
+- POST /translate  translate study materials
+- POST /faculty    Faculty audit report
+- POST /provost    Provost curriculum map (multiple URLs)
 
-Environment: Loads `backend/.env` via python-dotenv for API keys used in future parts.
+Note on concurrency: every endpoint that calls a blocking agent is a plain `def`, so
+FastAPI runs it in its threadpool. An `async def` endpoint that calls blocking code
+would stall the event loop and freeze every other request on the worker.
+
+Environment: Loads `backend/.env` via python-dotenv.
 """
 
 from __future__ import annotations
 
-import base64
+import concurrent.futures
 import logging
 import os
 import time
 import traceback
-from typing import Optional
 from urllib.parse import urlparse
 
-from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Request
+import services
+from budget import AIBudgetMiddleware
+from fastapi import FastAPI, HTTPException
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from agents.content_agent import ContentAgent, ContentAgentError
-from agents.faculty_agent import FacultyAgent, FacultyAgentError
-from agents.provost_agent import ProvostAgent, ProvostAgentError
-from agents.search_agent import SearchAgent, SearchAgentError
-from agents.transcript_agent import (
-    TranscriptAgent,
-    TranscriptAgentError,
-    TranscriptFetchTimeoutError,
-    TranscriptUnavailableError,
-)
-from agents.translate_agent import TranslateAgent, TranslateAgentError
+from jobs.routes import lifespan, router as jobs_router
 from models.schemas import (
+    FacultyRequest,
     ProcessYouTubeRequest,
     ProcessYouTubeResponse,
+    ProvostRequest,
     SearchRequest,
     SearchResponse,
     SearchResult,
     TranslateRequest,
     TranslateResponse,
 )
-from utils.youtube import InvalidYouTubeUrlError
-from utils.youtube import extract_youtube_video_id
-
-# Step: Load environment variables from backend/.env before reading configuration.
-load_dotenv()
-
-# Decode YouTube cookies from base64 on startup (Railway: set YOUTUBE_COOKIES_BASE64 + YTDLP_COOKIE_FILE).
-_cookies_b64 = os.getenv("YOUTUBE_COOKIES_BASE64", "").strip()
-if _cookies_b64:
-    _cookies_path = os.getenv("YTDLP_COOKIE_FILE", "/data/cookies.txt")
-    try:
-        _parent = os.path.dirname(_cookies_path)
-        if _parent:
-            os.makedirs(_parent, exist_ok=True)
-        with open(_cookies_path, "wb") as _f:
-            _f.write(base64.b64decode(_cookies_b64))
-        print(f"YouTube cookies written to {_cookies_path}")
-    except Exception as _e:
-        print(f"Warning: Could not write cookies file: {_e}")
+from services import (
+    ContentAgentError,
+    FacultyAgentError,
+    ProvostAgentError,
+    SearchAgentError,
+    TranscriptAgentError,
+    TranscriptFetchTimeoutError,
+    TranscriptUnavailableError,
+    TranslateAgentError,
+)
+from utils.youtube import InvalidYouTubeUrlError, extract_youtube_video_id
 
 logger = logging.getLogger("lecturekit")
 
 
 app = FastAPI(
-    title="Cloudforce Frontier API",
-    version="0.1.0",
+    title="LectureKit API",
+    version="0.2.0",
     description="Multi-agent lecture → study environment backend",
+    lifespan=lifespan,
+)
+
+# Per-process rolling budget on the endpoints that spend Claude / Supadata credits.
+app.add_middleware(
+    AIBudgetMiddleware, paths=["/process", "/faculty", "/provost", "/translate", "/jobs"]
 )
 
 # Step: Return a concise, user-friendly 422 instead of a large Pydantic error tree.
 @app.exception_handler(RequestValidationError)
-def _request_validation_error_handler(_request, _exc: RequestValidationError) -> JSONResponse:
-    return JSONResponse(
-        status_code=422,
-        content={"detail": "Invalid request: 'youtube_url' must be a valid URL."},
-    )
+def _request_validation_error_handler(_request, exc: RequestValidationError) -> JSONResponse:
+    errors = exc.errors()
+    if errors:
+        first = errors[0]
+        field = ".".join(str(p) for p in first.get("loc", ()) if p != "body") or "request body"
+        detail = f"Invalid request: '{field}' {first.get('msg', 'is invalid')}".rstrip(".") + "."
+    else:
+        detail = "Invalid request body."
+    return JSONResponse(status_code=422, content={"detail": detail})
+
 
 # Parse CORS origins from environment variable
 cors_origins_raw = os.getenv("CORS_ORIGINS", "http://localhost:3000")
@@ -116,48 +118,7 @@ app.add_middleware(
     expose_headers=["*"],
 )
 
-# Step: Create the Agent 1 instance once; it is stateless and safe to reuse per request.
-transcript_agent = TranscriptAgent()
-# Step: Create Agent 3 once; it loads a local embedding model and persistent Chroma client.
-search_agent = SearchAgent()
-
-# Step: Lazy-init Claude-backed agents so Railway healthchecks pass before ANTHROPIC_API_KEY is set.
-_content_agent: Optional[ContentAgent] = None
-_translate_agent: Optional[TranslateAgent] = None
-_faculty_agent: Optional[FacultyAgent] = None
-_provost_agent: Optional[ProvostAgent] = None
-
-
-def get_content_agent() -> ContentAgent:
-    """Return a singleton ContentAgent; raises ContentAgentError if API key is missing."""
-    global _content_agent
-    if _content_agent is None:
-        _content_agent = ContentAgent()
-    return _content_agent
-
-
-def get_translate_agent() -> TranslateAgent:
-    """Return a singleton TranslateAgent; raises TranslateAgentError if API key is missing."""
-    global _translate_agent
-    if _translate_agent is None:
-        _translate_agent = TranslateAgent()
-    return _translate_agent
-
-
-def get_faculty_agent() -> FacultyAgent:
-    """Return a singleton FacultyAgent; raises FacultyAgentError if API key is missing."""
-    global _faculty_agent
-    if _faculty_agent is None:
-        _faculty_agent = FacultyAgent()
-    return _faculty_agent
-
-
-def get_provost_agent() -> ProvostAgent:
-    """Return a singleton ProvostAgent; raises ProvostAgentError if API key is missing."""
-    global _provost_agent
-    if _provost_agent is None:
-        _provost_agent = ProvostAgent()
-    return _provost_agent
+app.include_router(jobs_router)
 
 
 @app.get("/health")
@@ -180,62 +141,9 @@ def health_check() -> dict[str, str | bool]:
     }
 
 
-@app.options("/process")
-async def process_options(request: Request) -> JSONResponse:
-    return JSONResponse(
-        content={},
-        headers={
-            "Access-Control-Allow-Origin": request.headers.get("origin", "*"),
-            "Access-Control-Allow-Methods": "POST, OPTIONS",
-            "Access-Control-Allow-Headers": "Content-Type, Authorization",
-            "Access-Control-Max-Age": "86400",
-        },
-    )
-
-
-@app.options("/search")
-async def search_options(request: Request) -> JSONResponse:
-    return JSONResponse(
-        content={},
-        headers={
-            "Access-Control-Allow-Origin": request.headers.get("origin", "*"),
-            "Access-Control-Allow-Methods": "POST, OPTIONS",
-            "Access-Control-Allow-Headers": "Content-Type, Authorization",
-            "Access-Control-Max-Age": "86400",
-        },
-    )
-
-
-@app.options("/translate")
-async def translate_options(request: Request) -> JSONResponse:
-    return JSONResponse(
-        content={},
-        headers={
-            "Access-Control-Allow-Origin": request.headers.get("origin", "*"),
-            "Access-Control-Allow-Methods": "POST, OPTIONS",
-            "Access-Control-Allow-Headers": "Content-Type, Authorization",
-            "Access-Control-Max-Age": "86400",
-        },
-    )
-
-
-@app.options("/faculty")
-async def faculty_options(request: Request) -> JSONResponse:
-    return JSONResponse(
-        content={},
-        headers={
-            "Access-Control-Allow-Origin": request.headers.get("origin", "*"),
-            "Access-Control-Allow-Methods": "POST, OPTIONS",
-            "Access-Control-Allow-Headers": "Content-Type, Authorization",
-            "Access-Control-Max-Age": "86400",
-        },
-    )
-
-
 @app.post("/faculty")
-async def faculty_report(request: Request) -> dict:
-    body = await request.json()
-    youtube_url = (body.get("youtube_url") or "").strip() if isinstance(body, dict) else ""
+def faculty_report(payload: FacultyRequest) -> dict:
+    youtube_url = payload.youtube_url.strip()
     if not youtube_url:
         raise HTTPException(status_code=422, detail="youtube_url is required")
 
@@ -245,7 +153,7 @@ async def faculty_report(request: Request) -> dict:
         raise HTTPException(status_code=422, detail=f"Invalid YouTube URL: {str(exc)}") from exc
 
     try:
-        _, chunks = transcript_agent.process(youtube_url)
+        _, chunks = services.transcript_agent.process(youtube_url)
     except InvalidYouTubeUrlError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except TranscriptUnavailableError as exc:
@@ -256,7 +164,7 @@ async def faculty_report(request: Request) -> dict:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     try:
-        report = get_faculty_agent().generate_report(chunks, video_id)
+        report = services.get_faculty_agent().generate_report(chunks, video_id)
     except FacultyAgentError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     except Exception as exc:
@@ -265,24 +173,10 @@ async def faculty_report(request: Request) -> dict:
     return {"status": "success", "video_id": video_id, "youtube_url": youtube_url, "report": report}
 
 
-@app.options("/provost")
-async def provost_options(request: Request) -> JSONResponse:
-    return JSONResponse(
-        content={},
-        headers={
-            "Access-Control-Allow-Origin": request.headers.get("origin", "*"),
-            "Access-Control-Allow-Methods": "POST, OPTIONS",
-            "Access-Control-Allow-Headers": "Content-Type, Authorization",
-            "Access-Control-Max-Age": "86400",
-        },
-    )
-
-
 @app.post("/provost")
-async def provost_report(request: Request) -> dict:
-    body = await request.json()
-    youtube_urls = body.get("youtube_urls", []) if isinstance(body, dict) else []
-    learning_objectives = (body.get("learning_objectives") or "").strip() if isinstance(body, dict) else ""
+def provost_report(payload: ProvostRequest) -> dict:
+    youtube_urls = [u.strip() for u in payload.youtube_urls if u and u.strip()]
+    learning_objectives = payload.learning_objectives.strip()
 
     if not youtube_urls:
         raise HTTPException(status_code=422, detail="youtube_urls array is required")
@@ -294,13 +188,10 @@ async def provost_report(request: Request) -> dict:
     lectures: list[dict] = []
     failed_urls: list[dict] = []
 
-    for raw_url in youtube_urls:
-        url = (str(raw_url) or "").strip()
-        if not url:
-            continue
+    for url in youtube_urls:
         try:
             video_id = extract_youtube_video_id(url)
-            _, chunks = transcript_agent.process(url)
+            _, chunks = services.transcript_agent.process(url)
             lectures.append(
                 {
                     "video_id": video_id,
@@ -317,7 +208,7 @@ async def provost_report(request: Request) -> dict:
         )
 
     try:
-        curriculum_map = get_provost_agent().generate_curriculum_map(lectures, learning_objectives)
+        curriculum_map = services.get_provost_agent().generate_curriculum_map(lectures, learning_objectives)
     except ProvostAgentError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
@@ -333,37 +224,21 @@ async def provost_report(request: Request) -> dict:
 @app.post("/process", response_model=ProcessYouTubeResponse)
 def process_youtube_lecture(payload: ProcessYouTubeRequest) -> ProcessYouTubeResponse:
     """
-    Accept a lecture URL and run TranscriptAgent (Part 2).
-
-    Args:
-        payload: Validated body containing `youtube_url`.
-
-    Returns:
-        TranscriptAgent output with extracted video_id and timestamped chunks.
+    Student mode: Transcript Agent, then Content Agent and Search indexing in parallel.
 
     Steps:
         1. Convert validated HttpUrl → string.
-        2. Call TranscriptAgent to fetch + clean + chunk.
-        3. Map domain errors to descriptive HTTP errors.
-
+        2. TranscriptAgent fetches + cleans + chunks.
+        3. ContentAgent and SearchAgent.index_chunks run concurrently on the chunks.
+        4. Map domain errors to descriptive HTTP errors.
     """
     # Step: Use the original submitted URL string for echoing back to clients.
     youtube_url_str = str(payload.youtube_url)
 
     try:
         t0 = time.perf_counter()
-        video_id, chunks = transcript_agent.process(youtube_url_str)
+        video_id, chunks = services.transcript_agent.process(youtube_url_str)
         t1 = time.perf_counter()
-        content_result = get_content_agent().process(chunks)
-        t2 = time.perf_counter()
-
-        logger.info(
-            "Processed %s | transcript=%.2fs content=%.2fs chunks=%d",
-            video_id,
-            (t1 - t0),
-            (t2 - t1),
-            len(chunks),
-        )
     except InvalidYouTubeUrlError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except TranscriptUnavailableError as exc:
@@ -374,18 +249,38 @@ def process_youtube_lecture(payload: ProcessYouTubeRequest) -> ProcessYouTubeRes
         raise HTTPException(status_code=504, detail=str(exc)) from exc
     except TranscriptAgentError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
-    except ContentAgentError as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
     except Exception as exc:  # pragma: no cover - safety net
         raise HTTPException(status_code=500, detail="Unexpected server error") from exc
 
-    indexed = False
-    try:
-        indexed = search_agent.index_chunks(video_id, chunks)
-    except Exception as exc:
-        # Step: Indexing failures should not block study materials delivery.
-        logger.exception("SearchAgent indexing failed for %s: %s", video_id, type(exc).__name__)
+    # Step: Agent 2 (Content, network-bound on Claude) and Agent 3 (Search indexing,
+    # CPU-bound embeddings) both only need Agent 1's chunks, so run them concurrently.
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+        content_future = pool.submit(lambda: services.get_content_agent().process(chunks))
+        index_future = pool.submit(services.search_agent.index_chunks, video_id, chunks)
+
+        try:
+            content_result = content_future.result()
+        except ContentAgentError as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+        except Exception as exc:  # pragma: no cover - safety net
+            raise HTTPException(status_code=500, detail="Unexpected server error") from exc
+
         indexed = False
+        try:
+            indexed = bool(index_future.result())
+        except Exception as exc:
+            # Step: Indexing failures should not block study materials delivery.
+            logger.exception("SearchAgent indexing failed for %s: %s", video_id, type(exc).__name__)
+            indexed = False
+    t2 = time.perf_counter()
+
+    logger.info(
+        "Processed %s | transcript=%.2fs content+index=%.2fs chunks=%d",
+        video_id,
+        (t1 - t0),
+        (t2 - t1),
+        len(chunks),
+    )
 
     return ProcessYouTubeResponse(
         status="success",
@@ -427,7 +322,7 @@ def search_video(payload: SearchRequest) -> SearchResponse:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     try:
-        hits = search_agent.search(video_id=video_id, query=query, n_results=3)
+        hits = services.search_agent.search(video_id=video_id, query=query, n_results=3)
     except SearchAgentError as exc:
         msg = str(exc)
         if "not processed" in msg or "Collection not found" in msg:
@@ -455,17 +350,15 @@ def translate_content(payload: TranslateRequest) -> TranslateResponse:
     """
     Translate structured study materials into a target language.
 
-    Requirements:
-    - Single Claude call
-    - Return JSON only with same structure as input
-    - Do not translate timestamps / numeric fields
+    One Claude call normally; split into two calls only if the output was truncated
+    or unparseable. Timestamps and numeric fields are never translated.
     """
     target = (payload.target_language or "").strip()
     if not target:
         raise HTTPException(status_code=422, detail="target_language must be a non-empty string.")
 
     try:
-        translated = get_translate_agent().translate(content=payload.content, target_language=target)
+        translated = services.get_translate_agent().translate(content=payload.content, target_language=target)
     except TranslateAgentError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     except Exception as exc:
