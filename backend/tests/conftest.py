@@ -9,11 +9,11 @@ from __future__ import annotations
 
 import hashlib
 import os
+import tempfile
 import sys
 from pathlib import Path
 
 import numpy as np
-import pytest
 
 # Tests make many AI-route calls; keep the demo budget from returning 429.
 os.environ["AI_REQUESTS_PER_MINUTE"] = "10000"
@@ -44,14 +44,13 @@ class FakeEmbedder:
         return out
 
 
-@pytest.fixture(autouse=True, scope="session")
-def _no_model_downloads(tmp_path_factory):
-    import sentence_transformers
+# Patch at import time (before any test module imports `services`, which builds a
+# SearchAgent at import) so no test ever downloads the real embedding model.
+import sentence_transformers  # noqa: E402
 
-    sentence_transformers.SentenceTransformer = FakeEmbedder  # type: ignore[assignment]
-    import agents.search_agent as sa
+sentence_transformers.SentenceTransformer = FakeEmbedder  # type: ignore[assignment]
+import agents.search_agent as _sa  # noqa: E402
 
-    sa.SentenceTransformer = FakeEmbedder  # type: ignore[assignment]
-    os.environ["CHROMA_DB_PATH"] = str(tmp_path_factory.mktemp("chroma"))
-    os.environ.setdefault("ANTHROPIC_API_KEY", "test-key")
-    yield
+_sa.SentenceTransformer = FakeEmbedder  # type: ignore[assignment]
+os.environ.setdefault("CHROMA_DB_PATH", tempfile.mkdtemp(prefix="lk-chroma-"))
+os.environ.setdefault("ANTHROPIC_API_KEY", "test-key")

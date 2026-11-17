@@ -9,6 +9,12 @@ on:
 jobs:
   backend-tests:
     runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 3s --health-retries 10
     defaults:
       run:
         working-directory: backend
@@ -25,4 +31,6 @@ jobs:
           pip install -r requirements.txt pytest
       # No API keys or network calls: Claude, transcripts and embeddings are mocked.
       - name: Run tests
+        env:
+          TEST_REDIS_URL: redis://localhost:6379/0
         run: python -m pytest -q

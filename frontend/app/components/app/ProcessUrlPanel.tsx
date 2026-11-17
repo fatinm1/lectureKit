@@ -1,8 +1,12 @@
 /**
- * App workspace — YouTube URL capture wired to FastAPI `POST /process`.
+ * App workspace — YouTube URL capture.
  *
  * Purpose: Functional surface at `/app` (distinct from landing `/`).
- * Data flow: Browser → `${NEXT_PUBLIC_API_URL}/process` → structured acknowledgement JSON (logged).
+ * Data flow (background jobs, preferred):
+ *   POST /jobs → job_id (instant) → EventSource on /jobs/{id}/events drives the real progress
+ *   stepper. Student mode jumps to /study as soon as the transcript is ready; the study page
+ *   keeps listening and fills in each section as it arrives. Faculty / Provost navigate on `done`.
+ * Fallback (backend without Redis): the original blocking POST /process | /faculty | /provost.
  */
 
 "use client";
@@ -12,6 +16,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 
 import type { FacultySession, LectureSession, ProvostSession } from "../../../types/lecture";
+import { createJob, JobRequestError, subscribeToJob, type CreateJobBody, type JobSubscription } from "../../../utils/jobs";
 
 const FEATURES = ["Instant Summaries", "Smart Flashcards", "Semantic Search"] as const;
 
@@ -64,6 +69,8 @@ export function ProcessUrlPanel(): JSX.Element {
     3: false,
   });
   const timersRef = useRef<number[]>([]);
+  const subscriptionRef = useRef<JobSubscription | null>(null);
+  const [progressNote, setProgressNote] = useState<string | null>(null);
 
   const router = useRouter();
 
@@ -95,7 +102,10 @@ export function ProcessUrlPanel(): JSX.Element {
   }
 
   useEffect(() => {
-    return () => clearTimers();
+    return () => {
+      clearTimers();
+      subscriptionRef.current?.close();
+    };
   }, []);
 
   useEffect(() => {
@@ -127,6 +137,9 @@ export function ProcessUrlPanel(): JSX.Element {
 
   function resetToForm(message?: string): void {
     clearTimers();
+    subscriptionRef.current?.close();
+    subscriptionRef.current = null;
+    setProgressNote(null);
     setUiMode("form");
     setIsSubmitting(false);
     setActiveStep(1);
@@ -207,6 +220,80 @@ export function ProcessUrlPanel(): JSX.Element {
     window.localStorage.setItem("lecturekit_provost_session", JSON.stringify(session));
   }
 
+  function markStep(done: Array<1 | 2 | 3>, active: 1 | 2 | 3): void {
+    setCompletedSteps((prev) => {
+      const next = { ...prev };
+      for (const d of done) next[d] = true;
+      return next;
+    });
+    setActiveStep(active);
+  }
+
+  /**
+   * Drive the stepper from real backend events. Returns once the subscription is set up;
+   * navigation / errors happen inside the event handler.
+   */
+  function followJob(jobId: string, jobMode: "student" | "faculty" | "provost"): void {
+    clearTimers();
+    setActiveStep(1);
+    setCompletedSteps({ 1: false, 2: false, 3: false });
+
+    // If nothing moves for a while the job is waiting for a free worker.
+    timersRef.current.push(
+      window.setTimeout(() => setProgressNote("Waiting for a free worker — other lectures are being processed."), 20000)
+    );
+
+    subscriptionRef.current = subscribeToJob(
+      jobId,
+      (event) => {
+        if (event.type !== "queued") {
+          clearTimers();
+          setProgressNote(null);
+        }
+        switch (event.type) {
+          case "transcript_fetched":
+            if (jobMode === "student") {
+              // First visible content is ready: open the study page now and let it stream the rest.
+              markStep([1], 2);
+              subscriptionRef.current?.close();
+              router.push(`/study?job=${encodeURIComponent(jobId)}`);
+              return;
+            }
+            markStep([1], 2);
+            return;
+          case "lecture_fetched":
+          case "lecture_failed":
+            setProgressNote(
+              `${event.data.index + 1} of ${event.data.total} lecture transcripts checked` +
+                (event.type === "lecture_failed" ? " (one could not be fetched)" : "")
+            );
+            return;
+          case "analyzing":
+            setProgressNote(null);
+            markStep([1], 2);
+            return;
+          case "done": {
+            setCompletedSteps({ 1: true, 2: true, 3: true });
+            const result = event.data.result;
+            if (jobMode === "faculty") persistFacultySession(result);
+            else if (jobMode === "provost") persistProvostSession(result);
+            else persistStudentSession(result);
+            window.setTimeout(() => {
+              router.push(jobMode === "faculty" ? "/report" : jobMode === "provost" ? "/curriculum" : "/study");
+            }, 400);
+            return;
+          }
+          case "failed":
+            resetToForm(event.data.message || "Processing failed. Please try a different URL.");
+            return;
+          default:
+            return;
+        }
+      },
+      () => resetToForm("Lost connection to the server while processing. Please try again.")
+    );
+  }
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setStatusMessage(null);
@@ -246,6 +333,33 @@ export function ProcessUrlPanel(): JSX.Element {
         return;
       }
 
+      const jobBody: CreateJobBody =
+        mode === "provost"
+          ? {
+              mode: "provost",
+              youtube_urls: provostUrls
+                .split("\n")
+                .map((u) => u.trim())
+                .filter(Boolean),
+              learning_objectives: learningObjectives.trim(),
+            }
+          : { mode, youtube_url: url };
+
+      try {
+        const jobId = await createJob(jobBody);
+        if (jobId) {
+          followJob(jobId, mode);
+          return;
+        }
+      } catch (err) {
+        if (err instanceof JobRequestError) {
+          resetToForm(err.message);
+          return;
+        }
+        throw err;
+      }
+
+      // Fallback: backend without background jobs → original blocking request with a timed stepper.
       const path = mode === "faculty" ? "/faculty" : mode === "provost" ? "/provost" : "/process";
       const endpoint = `${getApiBaseUrl()}${path}`;
       const body =
@@ -370,7 +484,7 @@ export function ProcessUrlPanel(): JSX.Element {
             ? "Paste up to 10 YouTube lecture URLs from a single course and your learning objectives. LectureKit will map what was actually taught against what the course promises to deliver."
             : mode === "faculty"
               ? "Paste a public YouTube lecture link. LectureKit will analyze your lecture across pedagogical quality, accessibility, equity, and clarity — and generate a private prioritized fix list with timestamped suggested rewrites."
-              : "Paste a public YouTube lecture link. LectureKit will orchestrate transcript extraction, analysis, and search indexing — results surface here as soon as the pipeline ships."}
+              : "Paste a public YouTube lecture link. LectureKit fetches the transcript, then opens your study kit right away and fills in the outline, summaries, flashcards and search as each one is ready."}
         </p>
 
         {statusMessage && uiMode === "form" ? (
@@ -479,6 +593,7 @@ export function ProcessUrlPanel(): JSX.Element {
                 const state = completedSteps[step.id] ? "complete" : activeStep === step.id ? "active" : "inactive";
                 return <StepIndicator key={step.id} label={step.label} state={state} />;
               })}
+              {progressNote ? <p className="pt-2 text-left text-xs text-zinc-500">{progressNote}</p> : null}
             </div>
 
             {statusMessage ? (

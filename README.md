@@ -103,6 +103,27 @@ A provost pastes multiple lecture URLs and their course learning objectives and 
 
 ---
 
+## Background Jobs and Live Progress
+
+Processing a lecture takes over a minute, mostly waiting on Claude. Instead of holding one HTTP request open for that long:
+
+1. `POST /jobs` validates the URL, enqueues an **ARQ** job in **Redis**, and returns a `job_id` in milliseconds.
+2. The worker runs the agents and appends an event to a **Redis Stream** as each stage finishes: `transcript_fetched` → `chunks_indexed` → `outline_ready` → `summaries_ready` → `flashcards_ready` → `done` (or `failed`).
+3. `GET /jobs/{id}/events` streams those events to the browser as **Server-Sent Events**.
+4. Student mode opens `/study` as soon as the transcript is ready. The video player appears first, search becomes usable when indexing finishes (usually before Claude is done), and the outline, summaries and flashcards fill in as they arrive.
+
+Why a Redis Stream rather than pub/sub: every event is kept, so a browser that connects late, refreshes, or drops its connection gets the full history. The stream entry id is used as the SSE `id`, so `EventSource` resumes from `Last-Event-ID` without receiving anything twice.
+
+The worker runs inside the API process by default, so the API and worker share one ChromaDB directory. Jobs are never retried automatically, because a retry would quietly spend Claude credits again. If `REDIS_URL` isn't set, `POST /jobs` returns 503 and the frontend falls back to the blocking endpoints, so the frontend and backend can be deployed in either order. Deployment steps: [docs/deploy-railway.md](docs/deploy-railway.md).
+
+To measure time to first visible content before and after against a live backend:
+
+```bash
+cd backend && python scripts/measure_ttfc.py --api <backend-url> <lecture-url> [...]
+```
+
+---
+
 ## Data Flow
 
 ```text
@@ -137,7 +158,7 @@ Agent 1: Transcript Agent ◄── Supadata API / yt-dlp
    (seekTo via postMessage)
 ```
 
-Agent 2 and Agent 3 run in parallel in Student mode. Agent 4 (Translation) runs on demand when the user selects a language — separate /translate call, cached per session.
+Agent 2 and Agent 3 run in parallel in Student mode. With background jobs, every arrow above becomes an SSE event, and the study page renders each section as soon as its event arrives. Agent 4 (Translation) runs on demand when the user selects a language — separate /translate call, cached per session.
 
 ---
 
@@ -148,6 +169,7 @@ Agent 2 and Agent 3 run in parallel in Student mode. Agent 4 (Translation) runs 
 | Frontend | Next.js 14, TypeScript, Tailwind CSS |
 | Design | Lumina design system — Playfair Display + Inter |
 | Backend | FastAPI, Python 3.11, uvicorn |
+| Jobs | ARQ worker + Redis Streams, Server-Sent Events |
 | LLM | Claude Sonnet — claude-sonnet-4-6 |
 | Embeddings | sentence-transformers all-MiniLM-L6-v2 (local) |
 | Vector Store | ChromaDB (`CHROMA_DB_PATH`; `/tmp` on Railway is wiped on redeploy, so mount a volume) |
@@ -174,12 +196,14 @@ Agent 2 and Agent 3 run in parallel in Student mode. Agent 4 (Translation) runs 
 ### Backend
 
 ```bash
+docker compose up -d            # Redis, for background jobs (optional)
 cd backend
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
 # Add your ANTHROPIC_API_KEY and SUPADATA_API_KEY to .env
+# Optional: REDIS_URL=redis://localhost:6379 for background jobs + live progress
 uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
 
@@ -189,6 +213,8 @@ uvicorn main:app --reload --host 0.0.0.0 --port 8000
 cd backend
 pip install pytest
 python -m pytest -q
+# Job/SSE tests also need Redis:
+TEST_REDIS_URL=redis://localhost:6379/0 python -m pytest -q
 ```
 
 No API keys or network needed: Claude, transcript fetching and the embedding model are mocked.
@@ -220,6 +246,9 @@ npm run dev
 | YTDLP_COOKIE_FILE | Path to decoded cookies file (default: /tmp/cookies.txt) |
 | YOUTUBE_PROXY_URL | Primary proxy URL for yt-dlp fallback |
 | YOUTUBE_PROXY_URL_1 through _9 | Additional proxy URLs tried in sequence |
+| REDIS_URL | Enables background jobs + live progress (unset → blocking endpoints only) |
+| RUN_WORKER_IN_PROCESS | Run the ARQ worker inside the API process (default `true`) |
+| WORKER_MAX_JOBS | Lectures processed concurrently per worker (default `2`) |
 
 ### Frontend (`frontend/.env.local`)
 
@@ -234,7 +263,10 @@ npm run dev
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | GET | /health | Health check |
-| POST | /process | Student mode — transcript + content + search indexing |
+| POST | /jobs | Enqueue a student / faculty / provost run; returns `job_id` immediately (202) |
+| GET | /jobs/{job_id} | Job status and final result |
+| GET | /jobs/{job_id}/events | Server-Sent Events progress stream (replays from start or `Last-Event-ID`) |
+| POST | /process | Student mode, blocking (fallback when Redis isn't configured) |
 | POST | /search | Semantic search for a processed video |
 | POST | /translate | Translate study materials to a target language |
 | POST | /faculty | Faculty audit report |
@@ -250,6 +282,13 @@ CORS preflight is handled by FastAPI's `CORSMiddleware` using `CORS_ORIGINS`.
 lectureKit/
 ├── backend/
 │   ├── main.py                   # FastAPI app, all endpoints, CORS
+│   ├── services.py               # Shared agent singletons + error classification
+│   ├── budget.py                 # Per-process rate/concurrency guard for AI routes
+│   ├── jobs/
+│   │   ├── routes.py             # POST /jobs, GET /jobs/{id}, SSE /jobs/{id}/events, lifespan
+│   │   ├── pipeline.py           # Student / Faculty / Provost pipelines that emit stage events
+│   │   ├── events.py             # Redis Streams job state + event bus
+│   │   └── worker.py             # ARQ worker (in-process or `arq jobs.worker.WorkerSettings`)
 │   ├── agents/
 │   │   ├── transcript_agent.py   # Agent 1: Supadata + yt-dlp + clean + chunk
 │   │   ├── content_agent.py      # Agent 2: Claude outline + summaries + flashcards
@@ -278,7 +317,8 @@ lectureKit/
     ├── types/
     │   └── lecture.ts            # All TypeScript types
     └── utils/
-        └── format.ts             # Timestamp formatting
+        ├── format.ts             # Timestamp formatting
+        └── jobs.ts               # POST /jobs + EventSource client
 ```
 
 ---

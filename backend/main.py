@@ -18,63 +18,43 @@ Environment: Loads `backend/.env` via python-dotenv.
 
 from __future__ import annotations
 
-import base64
 import concurrent.futures
 import logging
 import os
 import time
 import traceback
-from typing import Optional
 from urllib.parse import urlparse
 
+import services
 from budget import AIBudgetMiddleware
-from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from agents.content_agent import ContentAgent, ContentAgentError
-from agents.faculty_agent import FacultyAgent, FacultyAgentError
-from agents.provost_agent import ProvostAgent, ProvostAgentError
-from agents.search_agent import SearchAgent, SearchAgentError
-from agents.transcript_agent import (
-    TranscriptAgent,
-    TranscriptAgentError,
-    TranscriptFetchTimeoutError,
-    TranscriptUnavailableError,
-)
-from agents.translate_agent import TranslateAgent, TranslateAgentError
+from jobs.routes import lifespan, router as jobs_router
 from models.schemas import (
     FacultyRequest,
     ProcessYouTubeRequest,
-    ProvostRequest,
     ProcessYouTubeResponse,
+    ProvostRequest,
     SearchRequest,
     SearchResponse,
     SearchResult,
     TranslateRequest,
     TranslateResponse,
 )
-from utils.youtube import InvalidYouTubeUrlError
-from utils.youtube import extract_youtube_video_id
-
-# Step: Load environment variables from backend/.env before reading configuration.
-load_dotenv()
-
-# Decode YouTube cookies from base64 on startup (Railway: set YOUTUBE_COOKIES_BASE64 + YTDLP_COOKIE_FILE).
-_cookies_b64 = os.getenv("YOUTUBE_COOKIES_BASE64", "").strip()
-if _cookies_b64:
-    _cookies_path = os.getenv("YTDLP_COOKIE_FILE", "/data/cookies.txt")
-    try:
-        _parent = os.path.dirname(_cookies_path)
-        if _parent:
-            os.makedirs(_parent, exist_ok=True)
-        with open(_cookies_path, "wb") as _f:
-            _f.write(base64.b64decode(_cookies_b64))
-        print(f"YouTube cookies written to {_cookies_path}")
-    except Exception as _e:
-        print(f"Warning: Could not write cookies file: {_e}")
+from services import (
+    ContentAgentError,
+    FacultyAgentError,
+    ProvostAgentError,
+    SearchAgentError,
+    TranscriptAgentError,
+    TranscriptFetchTimeoutError,
+    TranscriptUnavailableError,
+    TranslateAgentError,
+)
+from utils.youtube import InvalidYouTubeUrlError, extract_youtube_video_id
 
 logger = logging.getLogger("lecturekit")
 
@@ -83,10 +63,13 @@ app = FastAPI(
     title="LectureKit API",
     version="0.2.0",
     description="Multi-agent lecture → study environment backend",
+    lifespan=lifespan,
 )
 
 # Per-process rolling budget on the endpoints that spend Claude / Supadata credits.
-app.add_middleware(AIBudgetMiddleware, paths=["/process", "/faculty", "/provost", "/translate"])
+app.add_middleware(
+    AIBudgetMiddleware, paths=["/process", "/faculty", "/provost", "/translate", "/jobs"]
+)
 
 # Step: Return a concise, user-friendly 422 instead of a large Pydantic error tree.
 @app.exception_handler(RequestValidationError)
@@ -135,48 +118,7 @@ app.add_middleware(
     expose_headers=["*"],
 )
 
-# Step: Create the Agent 1 instance once; it is stateless and safe to reuse per request.
-transcript_agent = TranscriptAgent()
-# Step: Create Agent 3 once; it loads a local embedding model and persistent Chroma client.
-search_agent = SearchAgent()
-
-# Step: Lazy-init Claude-backed agents so Railway healthchecks pass before ANTHROPIC_API_KEY is set.
-_content_agent: Optional[ContentAgent] = None
-_translate_agent: Optional[TranslateAgent] = None
-_faculty_agent: Optional[FacultyAgent] = None
-_provost_agent: Optional[ProvostAgent] = None
-
-
-def get_content_agent() -> ContentAgent:
-    """Return a singleton ContentAgent; raises ContentAgentError if API key is missing."""
-    global _content_agent
-    if _content_agent is None:
-        _content_agent = ContentAgent()
-    return _content_agent
-
-
-def get_translate_agent() -> TranslateAgent:
-    """Return a singleton TranslateAgent; raises TranslateAgentError if API key is missing."""
-    global _translate_agent
-    if _translate_agent is None:
-        _translate_agent = TranslateAgent()
-    return _translate_agent
-
-
-def get_faculty_agent() -> FacultyAgent:
-    """Return a singleton FacultyAgent; raises FacultyAgentError if API key is missing."""
-    global _faculty_agent
-    if _faculty_agent is None:
-        _faculty_agent = FacultyAgent()
-    return _faculty_agent
-
-
-def get_provost_agent() -> ProvostAgent:
-    """Return a singleton ProvostAgent; raises ProvostAgentError if API key is missing."""
-    global _provost_agent
-    if _provost_agent is None:
-        _provost_agent = ProvostAgent()
-    return _provost_agent
+app.include_router(jobs_router)
 
 
 @app.get("/health")
@@ -211,7 +153,7 @@ def faculty_report(payload: FacultyRequest) -> dict:
         raise HTTPException(status_code=422, detail=f"Invalid YouTube URL: {str(exc)}") from exc
 
     try:
-        _, chunks = transcript_agent.process(youtube_url)
+        _, chunks = services.transcript_agent.process(youtube_url)
     except InvalidYouTubeUrlError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except TranscriptUnavailableError as exc:
@@ -222,7 +164,7 @@ def faculty_report(payload: FacultyRequest) -> dict:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     try:
-        report = get_faculty_agent().generate_report(chunks, video_id)
+        report = services.get_faculty_agent().generate_report(chunks, video_id)
     except FacultyAgentError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     except Exception as exc:
@@ -249,7 +191,7 @@ def provost_report(payload: ProvostRequest) -> dict:
     for url in youtube_urls:
         try:
             video_id = extract_youtube_video_id(url)
-            _, chunks = transcript_agent.process(url)
+            _, chunks = services.transcript_agent.process(url)
             lectures.append(
                 {
                     "video_id": video_id,
@@ -266,7 +208,7 @@ def provost_report(payload: ProvostRequest) -> dict:
         )
 
     try:
-        curriculum_map = get_provost_agent().generate_curriculum_map(lectures, learning_objectives)
+        curriculum_map = services.get_provost_agent().generate_curriculum_map(lectures, learning_objectives)
     except ProvostAgentError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
@@ -295,7 +237,7 @@ def process_youtube_lecture(payload: ProcessYouTubeRequest) -> ProcessYouTubeRes
 
     try:
         t0 = time.perf_counter()
-        video_id, chunks = transcript_agent.process(youtube_url_str)
+        video_id, chunks = services.transcript_agent.process(youtube_url_str)
         t1 = time.perf_counter()
     except InvalidYouTubeUrlError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -313,8 +255,8 @@ def process_youtube_lecture(payload: ProcessYouTubeRequest) -> ProcessYouTubeRes
     # Step: Agent 2 (Content, network-bound on Claude) and Agent 3 (Search indexing,
     # CPU-bound embeddings) both only need Agent 1's chunks, so run them concurrently.
     with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
-        content_future = pool.submit(lambda: get_content_agent().process(chunks))
-        index_future = pool.submit(search_agent.index_chunks, video_id, chunks)
+        content_future = pool.submit(lambda: services.get_content_agent().process(chunks))
+        index_future = pool.submit(services.search_agent.index_chunks, video_id, chunks)
 
         try:
             content_result = content_future.result()
@@ -380,7 +322,7 @@ def search_video(payload: SearchRequest) -> SearchResponse:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     try:
-        hits = search_agent.search(video_id=video_id, query=query, n_results=3)
+        hits = services.search_agent.search(video_id=video_id, query=query, n_results=3)
     except SearchAgentError as exc:
         msg = str(exc)
         if "not processed" in msg or "Collection not found" in msg:
@@ -416,7 +358,7 @@ def translate_content(payload: TranslateRequest) -> TranslateResponse:
         raise HTTPException(status_code=422, detail="target_language must be a non-empty string.")
 
     try:
-        translated = get_translate_agent().translate(content=payload.content, target_language=target)
+        translated = services.get_translate_agent().translate(content=payload.content, target_language=target)
     except TranslateAgentError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     except Exception as exc:

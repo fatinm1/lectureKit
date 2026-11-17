@@ -8,6 +8,7 @@ import time
 import pytest
 from fastapi.testclient import TestClient
 
+import services
 from models.schemas import ContentAgentResult, Flashcard, OutlineItem, TranscriptChunk
 
 VIDEO_URL = "https://www.youtube.com/watch?v=jNQXAC9IVRw"
@@ -34,7 +35,7 @@ def _content():
 def api(monkeypatch):
     import main
 
-    monkeypatch.setattr(main.transcript_agent, "process", lambda url: ("jNQXAC9IVRw", _chunks()))
+    monkeypatch.setattr(services.transcript_agent, "process", lambda url: ("jNQXAC9IVRw", _chunks()))
     return main, TestClient(main.app)
 
 
@@ -58,8 +59,8 @@ def test_process_runs_content_and_indexing_concurrently(api, monkeypatch):
         barrier.wait()
         return True
 
-    monkeypatch.setattr(main, "get_content_agent", lambda: SlowContent())
-    monkeypatch.setattr(main.search_agent, "index_chunks", slow_index)
+    monkeypatch.setattr(services, "get_content_agent", lambda: SlowContent())
+    monkeypatch.setattr(services.search_agent, "index_chunks", slow_index)
 
     r = client.post("/process", json={"youtube_url": VIDEO_URL})
     assert r.status_code == 200, r.text
@@ -77,8 +78,8 @@ def test_process_still_returns_when_indexing_fails(api, monkeypatch):
     def boom(*_a, **_k):
         raise RuntimeError("chroma down")
 
-    monkeypatch.setattr(main, "get_content_agent", lambda: Content())
-    monkeypatch.setattr(main.search_agent, "index_chunks", boom)
+    monkeypatch.setattr(services, "get_content_agent", lambda: Content())
+    monkeypatch.setattr(services.search_agent, "index_chunks", boom)
     r = client.post("/process", json={"youtube_url": VIDEO_URL})
     assert r.status_code == 200 and r.json()["indexed"] is False
 
@@ -99,7 +100,7 @@ def test_faculty_does_not_block_other_requests(api, monkeypatch):
             time.sleep(1.5)
             return {"overall_score": 7}
 
-    monkeypatch.setattr(main, "get_faculty_agent", lambda: SlowFaculty())
+    monkeypatch.setattr(services, "get_faculty_agent", lambda: SlowFaculty())
 
     result = {}
     # `with TestClient(...)` shares ONE event loop across requests, like a real uvicorn worker.
@@ -131,8 +132,8 @@ def test_provost_reports_failed_urls(api, monkeypatch):
         def generate_curriculum_map(self, lectures, objectives):
             return {"overall_coverage_score": 5, "n": len(lectures)}
 
-    monkeypatch.setattr(main.transcript_agent, "process", process)
-    monkeypatch.setattr(main, "get_provost_agent", lambda: Provost())
+    monkeypatch.setattr(services.transcript_agent, "process", process)
+    monkeypatch.setattr(services, "get_provost_agent", lambda: Provost())
     r = client.post(
         "/provost",
         json={"youtube_urls": [VIDEO_URL, "https://youtu.be/badbadbad12"], "learning_objectives": "1) x"},
@@ -146,3 +147,11 @@ def test_provost_rejects_more_than_ten(api):
     _, client = api
     r = client.post("/provost", json={"youtube_urls": [VIDEO_URL] * 11, "learning_objectives": "x"})
     assert r.status_code == 422
+
+
+def test_jobs_return_503_without_redis(api, monkeypatch):
+    main, _ = api
+    monkeypatch.delenv("REDIS_URL", raising=False)
+    with TestClient(main.app) as client:
+        r = client.post("/jobs", json={"mode": "student", "youtube_url": VIDEO_URL})
+    assert r.status_code == 503
