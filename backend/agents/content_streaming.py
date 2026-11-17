@@ -10,12 +10,11 @@ that run in parallel:
    student starts reading the 90-second summary a few seconds after the transcript is ready.
 2. Outline + flashcards (structured JSON). Smaller output than before, so it finishes sooner.
 
-Prompt caching: both calls send the same system prompt (instructions + transcript), marked
-`cache_control: ephemeral`. The structured call waits until the summaries call has started
-responding (the point at which Anthropic's cache entry becomes readable), so the transcript,
-which is most of the input, is billed at the cached rate on the second call instead of twice
-at full price. If the summaries call is slow to start, the structured call goes ahead after
-a short timeout rather than waiting.
+Prompt caching: the structured call marks the transcript block `cache_control: ephemeral`, so
+its corrective retry (and the legacy fallback) re-read the transcript at the cached rate. The
+summaries call deliberately sends no tools: sharing one tools+system prefix between the two
+calls looked cheaper, but in production a tools list on the summaries call made Claude skip the
+@@SECTION@@ markers. The two calls now start in parallel instead of the structured call waiting.
 
 Cancellation: both calls stream, and both check `should_stop()` between pieces. Leaving the
 `with client.messages.stream(...)` block closes the connection, which stops generation (and
@@ -27,6 +26,7 @@ The blocking `/process` endpoint keeps using ContentAgent.process unchanged.
 from __future__ import annotations
 
 import hashlib
+import logging
 import threading
 import time
 from dataclasses import dataclass, field
@@ -37,6 +37,8 @@ from agents.structured_call import StructuredCallCancelled, StructuredOutputErro
 from models.schemas import Flashcard, OutlineItem, TranscriptChunk
 from models.structured import StudyStructure
 
+logger = logging.getLogger("lecturekit.content")
+
 SECTIONS: Tuple[str, ...] = ("summary_90s", "summary_5min", "summary_full")
 _MARKERS: Dict[str, str] = {
     "@@SUMMARY_90S@@": "summary_90s",
@@ -45,8 +47,9 @@ _MARKERS: Dict[str, str] = {
 }
 _MAX_MARKER_LEN = max(len(m) for m in _MARKERS)
 
-# Both calls send this same tool list: tools are the first part of the prompt-cache prefix
-# (tools → system → messages), so the summaries call carries it too, with tool_choice "none".
+# Only the structured call carries this tool. (An earlier version also sent it to the summaries
+# call with tool_choice "none" so both calls shared one cache prefix; in production that made
+# Claude drop the @@SECTION@@ markers, so the summaries call stays tool-free.)
 STUDY_TOOL = make_tool(
     "record_study_kit",
     "Record the outline and flashcards for the lecture.",
@@ -191,8 +194,15 @@ class StreamingContentAgent(ContentAgent):
 
     # ---------- prompts ----------
 
-    def _system_blocks(self, transcript: str) -> list:
-        """Identical for both calls so the second one reads the first one's cache."""
+    def _system_blocks(self, transcript: str, *, cache: bool = False) -> list:
+        """
+        Instructions + transcript. `cache=True` marks the transcript block for prompt caching; the
+        structured call uses it so its corrective retry (and the legacy fallback) re-read the
+        transcript at the cached rate instead of paying full price again.
+        """
+        transcript_block: dict = {"type": "text", "text": f"Lecture transcript (timestamped):\n{transcript}"}
+        if cache:
+            transcript_block["cache_control"] = {"type": "ephemeral"}
         return [
             {
                 "type": "text",
@@ -202,11 +212,7 @@ class StreamingContentAgent(ContentAgent):
                     "You will be given a lecture transcript; each line starts with [timestamp: Xs]."
                 ),
             },
-            {
-                "type": "text",
-                "text": f"Lecture transcript (timestamped):\n{transcript}",
-                "cache_control": {"type": "ephemeral"},
-            },
+            transcript_block,
         ]
 
     @staticmethod
@@ -266,6 +272,7 @@ class StreamingContentAgent(ContentAgent):
             raise ContentAgentError("ContentAgent received no transcript chunks.")
         transcript = self._format_timestamped_transcript(chunks)
         parser = SectionStreamParser()
+        raw: List[str] = []
         t0 = time.perf_counter()
         first_token_s: Optional[float] = None
 
@@ -274,8 +281,6 @@ class StreamingContentAgent(ContentAgent):
                 model=self._model,
                 max_tokens=4000,
                 system=self._system_blocks(transcript),
-                tools=[STUDY_TOOL],
-                tool_choice={"type": "none"},
                 messages=[{"role": "user", "content": self._summaries_instruction()}],
             ) as stream:
                 for piece in stream.text_stream:
@@ -284,6 +289,7 @@ class StreamingContentAgent(ContentAgent):
                         cache_warm.set()
                     if should_stop():
                         raise ContentCancelled()
+                    raw.append(piece)
                     for section, text in parser.feed(piece):
                         on_delta(section, text)
                 for section, text in parser.close():
@@ -298,6 +304,13 @@ class StreamingContentAgent(ContentAgent):
             cache_warm.set()
 
         if not parser.text["summary_90s"]:
+            head = "".join(raw)[:300].replace("\n", "\\n")
+            logger.warning(
+                "Summary stream had no sections (stop_reason=%r, %d chars). Start: %s",
+                getattr(message, "stop_reason", None),
+                len("".join(raw)),
+                head,
+            )
             raise ContentAgentError("Claude's summary stream did not contain the expected sections.")
         return StreamedSummaries(
             summary_90s=parser.text["summary_90s"],
@@ -329,7 +342,7 @@ class StreamingContentAgent(ContentAgent):
                 if time.perf_counter() > deadline:
                     break
 
-        system = self._system_blocks(transcript)
+        system = self._system_blocks(transcript, cache=True)
 
         def legacy() -> dict:
             # Last resort: the pre-tool-use prompt, read as text and repaired by the 4-strategy parser.
@@ -338,8 +351,6 @@ class StreamingContentAgent(ContentAgent):
                 model=self._model,
                 max_tokens=6000,
                 system=system,
-                tools=[STUDY_TOOL],
-                tool_choice={"type": "none"},
                 messages=[{"role": "user", "content": self._legacy_structured_instruction()}],
             ) as stream:
                 for piece in stream.text_stream:

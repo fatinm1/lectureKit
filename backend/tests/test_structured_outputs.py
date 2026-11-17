@@ -142,7 +142,7 @@ def test_two_invalid_tool_calls_fall_back_to_the_legacy_parser(paths):
     assert s.path == "legacy_fallback"
     assert paths == [("student", "legacy_fallback")]
     legacy_call = fake.calls[2]
-    assert legacy_call["tool_choice"] == {"type": "none"}  # same tools → same cache prefix
+    assert "tools" not in legacy_call  # plain text call; reads the cached transcript
 
 
 def test_everything_failing_raises_and_is_counted(paths):
@@ -165,16 +165,15 @@ def test_stop_cancels_the_structured_call():
     assert fake.closed_early.get("structured") is True
 
 
-def test_summaries_and_structured_calls_share_the_cache_prefix():
-    fake = FakeClaude()
-    agent = _agent(fake)
-    warm = threading.Event()
-    agent.stream_summaries(_chunks(), lambda *_: None, cache_warm=warm)
-    agent.generate_structured(_chunks(), cache_warm=warm)
-    summaries, structured = fake.calls
-    # Prefix = tools → system: both must be identical for the second call to read the cache.
-    assert summaries["tools"] == structured["tools"] and summaries["system"] == structured["system"]
-    assert summaries["tool_choice"] == {"type": "none"}
+def test_retry_reuses_the_cached_transcript_prefix():
+    nine_cards = copy.deepcopy(STRUCTURED)
+    nine_cards["flashcards"] = nine_cards["flashcards"][:9]
+    fake = FakeClaude(tool_inputs=[nine_cards, STRUCTURED])
+    _agent(fake).generate_structured(_chunks())
+    first, retry = fake.calls
+    # Same tools + system on both turns, transcript block cached -> the retry pays the cached rate.
+    assert first["tools"] == retry["tools"] and first["system"] == retry["system"]
+    assert first["system"][-1]["cache_control"] == {"type": "ephemeral"}
 
 
 def test_prompt_version_changes_with_the_tool_schema(monkeypatch):
