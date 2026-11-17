@@ -26,6 +26,7 @@ The blocking `/process` endpoint keeps using ContentAgent.process unchanged.
 
 from __future__ import annotations
 
+import hashlib
 import threading
 import time
 from dataclasses import dataclass, field
@@ -153,6 +154,24 @@ class StreamedSummaries:
 
 class StreamingContentAgent(ContentAgent):
     """ContentAgent with a streamed-summaries call and a separate structured call."""
+
+    @property
+    def prompt_version(self) -> str:
+        """
+        Cache key component: a hash of everything that shapes the output (prompts, model,
+        output limits). Edit a prompt or switch models and cached study kits stop matching,
+        so they are regenerated instead of served stale.
+        """
+        material = "\n".join(
+            [
+                self._model,
+                repr(self._system_blocks("")),
+                self._summaries_instruction(),
+                self._structured_instruction(),
+                "summaries:4000/structured:6000",
+            ]
+        )
+        return "student-" + hashlib.sha256(material.encode("utf-8")).hexdigest()[:12]
 
     # The agent is a shared singleton, so per-job state (the cache-warm signal) is passed in
     # by the caller rather than stored on the instance.

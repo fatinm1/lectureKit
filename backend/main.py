@@ -136,8 +136,10 @@ def health_check() -> dict[str, str | bool]:
     key_ok = bool((os.getenv("ANTHROPIC_API_KEY") or "").strip())
     return {
         "status": "ok",
-        "service": "cloudforce-frontier-api",
+        "service": "lecturekit-api",
         "anthropic_configured": key_ok,
+        "database": services.store is not None,
+        "cache": services.cache.redis is not None,
     }
 
 
@@ -321,6 +323,12 @@ def search_video(payload: SearchRequest) -> SearchResponse:
     except InvalidYouTubeUrlError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
+    # Step: Hot search cache (Redis). Embeddings never change for a lecture, so a cached
+    # answer for the same normalized query can't go stale.
+    cached = services.cache.get_search(video_id, query, 3)
+    if cached is not None:
+        return SearchResponse(results=[SearchResult(**r) for r in cached], query=query, video_id=video_id)
+
     try:
         hits = services.search_agent.search(video_id=video_id, query=query, n_results=3)
     except SearchAgentError as exc:
@@ -341,8 +349,53 @@ def search_video(payload: SearchRequest) -> SearchResponse:
         )
         for h in hits
     ]
+    services.cache.save_search(video_id, query, 3, [r.model_dump() for r in results])
 
     return SearchResponse(results=results, query=query, video_id=video_id)
+
+
+@app.get("/metrics")
+def metrics() -> dict:
+    """
+    Cache effectiveness and Claude usage.
+
+    - counters: Redis hit/miss counts for the result and search caches, plus Claude tokens
+      spent on fresh generations and tokens *saved* by serving cached results.
+    - jobs: from Postgres — job count, cache hit rate, median latency for hits vs misses.
+    - estimated_usd: tokens × per-million-token prices (env-configurable; defaults are
+      Claude Sonnet list prices and only an estimate).
+    """
+    counters = services.cache.counters()
+    jobs = services.store.job_metrics() if services.store is not None else None
+
+    def price(name: str, default: float) -> float:
+        try:
+            return float(os.getenv(name, default))
+        except ValueError:
+            return default
+
+    prices = {
+        "input_tokens": price("PRICE_INPUT_PER_MTOK", 3.0),
+        "output_tokens": price("PRICE_OUTPUT_PER_MTOK", 15.0),
+        "cache_creation_input_tokens": price("PRICE_CACHE_WRITE_PER_MTOK", 3.75),
+        "cache_read_input_tokens": price("PRICE_CACHE_READ_PER_MTOK", 0.30),
+    }
+
+    def usd(prefix: str) -> float:
+        return round(sum(counters.get(f"{prefix}_{k}", 0) * p / 1e6 for k, p in prices.items()), 4)
+
+    def rate(hit_keys: list[str], miss_key: str) -> float | None:
+        hits = sum(counters.get(k, 0) for k in hit_keys)
+        total = hits + counters.get(miss_key, 0)
+        return round(hits / total, 4) if total else None
+
+    return {
+        "result_cache_hit_rate": rate(["result_redis_hits", "result_db_hits"], "result_misses"),
+        "search_cache_hit_rate": rate(["search_hits"], "search_misses"),
+        "estimated_usd": {"spent": usd("spent"), "saved_by_cache": usd("saved")},
+        "counters": counters,
+        "jobs": jobs,
+    }
 
 
 @app.post("/translate", response_model=TranslateResponse)

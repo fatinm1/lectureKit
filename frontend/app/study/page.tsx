@@ -183,6 +183,7 @@ export default function StudyPage(): JSX.Element {
   const [pending, setPending] = useState<PendingSections>(NOTHING_PENDING);
   const [jobError, setJobError] = useState<string | null>(null);
   const [readyIn, setReadyIn] = useState<number | null>(null);
+  const [fromCache, setFromCache] = useState(false);
   const [streamingSection, setStreamingSection] = useState<SummarySection | null>(null);
   const [stopping, setStopping] = useState(false);
   const [stoppedNote, setStoppedNote] = useState<string | null>(null);
@@ -261,6 +262,7 @@ export default function StudyPage(): JSX.Element {
             case "done": {
               const timings = event.data.timings ?? {};
               if (typeof timings.total_s === "number") setReadyIn(timings.total_s);
+              setFromCache(Boolean(timings.cache_hit));
               console.log("[LectureKit] job timings (s)", { ...timings, first_content_s: timings.transcript_s });
               finish(sessionFromResult(event.data.result as StudentResult));
               return;
@@ -681,7 +683,10 @@ export default function StudyPage(): JSX.Element {
           ) : stoppedNote ? (
             <span>{stoppedNote}</span>
           ) : readyIn !== null ? (
-            <span>Study kit ready in {readyIn.toFixed(1)}s</span>
+            <span>
+              {fromCache ? "Loaded from cache in " : "Study kit ready in "}
+              {readyIn < 1 ? `${Math.max(1, Math.round(readyIn * 1000))} ms` : `${readyIn.toFixed(1)}s`}
+            </span>
           ) : (
             <span>Processed {processedLabel}</span>
           )}
@@ -697,6 +702,9 @@ export default function StudyPage(): JSX.Element {
                 <div className="px-2">
                   <PendingNote label="Generating outline…" />
                 </div>
+              ) : null}
+              {!pending.outline && session.outline.length === 0 && stoppedNote ? (
+                <p className="px-2 py-3 text-sm text-zinc-500">Stopped before the outline was ready.</p>
               ) : null}
               <ul className="max-h-[70vh] divide-y divide-white/5 overflow-auto pr-1">
                 {session.outline.map((item, idx) => {
@@ -841,7 +849,13 @@ export default function StudyPage(): JSX.Element {
 
               {rightTab === "flashcards" && pending.flashcards ? <PendingNote label="Generating flashcards…" /> : null}
 
-              {rightTab === "flashcards" && !pending.flashcards ? (
+              {rightTab === "flashcards" && !pending.flashcards && session.flashcards.length === 0 ? (
+                <p className="py-3 text-sm text-zinc-500">
+                  {stoppedNote ? "Stopped before the flashcards were ready." : "No flashcards for this lecture."}
+                </p>
+              ) : null}
+
+              {rightTab === "flashcards" && !pending.flashcards && session.flashcards.length > 0 ? (
                 <div className="flex flex-col gap-6">
                   <p className="text-center text-xs text-zinc-500">
                     Card {cardIndex + 1} of {session.flashcards.length}

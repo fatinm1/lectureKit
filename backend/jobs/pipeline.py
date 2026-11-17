@@ -47,6 +47,68 @@ class _Cancelled(Exception):
     """Raised inside the pipeline when the user pressed Stop."""
 
 
+# ---------- persistence helpers (never fail a job because of the cache) ----------
+
+
+async def _safe(fn, *args, **kwargs):
+    try:
+        return await asyncio.to_thread(fn, *args, **kwargs)
+    except Exception as exc:
+        logger.warning("Cache/DB call %s failed: %s: %s", getattr(fn, "__name__", fn), type(exc).__name__, exc)
+        return None
+
+
+async def _record_job(job_id: str, kind: str, video_id: Any, status: str, **kw: Any) -> None:
+    if services.store is not None:
+        await _safe(services.store.record_job, job_id, kind, video_id, status, **kw)
+
+
+async def _load_or_fetch_transcript(youtube_url: str) -> tuple[str, list, bool]:
+    """
+    Return (video_id, chunks, from_db). A transcript already in Postgres is reused, which
+    skips Supadata/YouTube entirely; a freshly fetched one is saved for next time.
+    """
+    video_id = extract_youtube_video_id(youtube_url)
+    if services.store is not None:
+        stored = await _safe(services.store.get_transcript, video_id)
+        if stored:
+            return video_id, stored, True
+    video_id, chunks = await asyncio.to_thread(services.transcript_agent.process, youtube_url)
+    if services.store is not None:
+        await _safe(services.store.save_transcript, video_id, youtube_url, chunks)
+    return video_id, chunks, False
+
+
+async def _replay_cached_student(
+    bus: JobEventBus, job_id: str, youtube_url: str, video_id: str, cached: Any, t0: float
+) -> None:
+    """Serve a stored study kit as the same event sequence a fresh run produces, minus the deltas."""
+    result = dict(cached.payload)
+    result["youtube_url"] = youtube_url
+    await bus.emit(
+        job_id,
+        "transcript_fetched",
+        {
+            "video_id": video_id,
+            "youtube_url": youtube_url,
+            "chunk_count": result.get("chunk_count", 0),
+            "cached": True,
+        },
+    )
+    await bus.emit(job_id, "chunks_indexed", {"indexed": bool(result.get("indexed"))})
+    await bus.emit(
+        job_id,
+        "summaries_ready",
+        {k: result.get(k, "") for k in ("summary_90s", "summary_5min", "summary_full")},
+    )
+    await bus.emit(job_id, "outline_ready", {"outline": result.get("outline", [])})
+    await bus.emit(job_id, "flashcards_ready", {"flashcards": result.get("flashcards", [])})
+    timings = {"cache_hit": True, "total_s": round(time.perf_counter() - t0, 3)}
+    await bus.set_result(job_id, result)
+    await bus.emit(job_id, "done", {"result": result, "timings": timings, "cached": True})
+    await _record_job(job_id, "student", video_id, "done", cache_hit=True, timings=timings)
+
+
 async def _cancel_watcher(bus: JobEventBus, job_id: str, stop: threading.Event) -> None:
     """Poll the cancel flag and trip `stop`, which the agent threads check between pieces."""
     while not stop.is_set():
@@ -78,8 +140,18 @@ async def run_student(bus: JobEventBus, job_id: str, youtube_url: str) -> None:
         if stop.is_set() or await bus.cancel_requested(job_id):
             raise _Cancelled()
 
-        video_id, chunks = await asyncio.to_thread(services.transcript_agent.process, youtube_url)
+        # Step: Result cache. Same lecture + same prompts/model → serve the stored kit.
+        agent = services.get_streaming_content_agent()
+        prompt_version = agent.prompt_version
+        video_id = extract_youtube_video_id(youtube_url)
+        cached = await _safe(services.cache.get_result, video_id, "student", "en", prompt_version)
+        if cached is not None:
+            await _replay_cached_student(bus, job_id, youtube_url, video_id, cached, t0)
+            return
+
+        video_id, chunks, transcript_from_db = await _load_or_fetch_transcript(youtube_url)
         timings["transcript_s"] = round(time.perf_counter() - t0, 3)
+        timings["transcript_cached"] = transcript_from_db
         partial.update({"video_id": video_id, "chunk_count": len(chunks)})
         await bus.emit(
             job_id,
@@ -95,7 +167,6 @@ async def run_student(bus: JobEventBus, job_id: str, youtube_url: str) -> None:
             raise _Cancelled()
 
         stage = "content"
-        agent = services.get_streaming_content_agent()
         cache_warm = threading.Event()
         deltas: asyncio.Queue = asyncio.Queue()
 
@@ -209,8 +280,12 @@ async def run_student(bus: JobEventBus, job_id: str, youtube_url: str) -> None:
             "indexed": indexed,
         }
         await bus.set_result(job_id, result)
+        await _safe(
+            services.cache.save_result, video_id, "student", "en", prompt_version, result, timings["usage"]
+        )
         logger.info("Job %s student done %s", job_id, timings)
         await bus.emit(job_id, "done", {"result": result, "timings": timings})
+        await _record_job(job_id, "student", video_id, "done", timings=timings, usage=timings["usage"])
     except _Cancelled:
         for section, text in summary_text.items():
             partial.setdefault(section, text.strip())
@@ -219,8 +294,10 @@ async def run_student(bus: JobEventBus, job_id: str, youtube_url: str) -> None:
         partial.setdefault("indexed", False)
         logger.info("Job %s cancelled at %s", job_id, stage)
         await _finish_cancelled(bus, job_id, partial)
+        await _record_job(job_id, "student", partial.get("video_id"), "cancelled", timings=timings)
     except Exception as exc:
         await _fail(bus, job_id, stage, exc)
+        await _record_job(job_id, "student", partial.get("video_id"), "failed", timings=timings)
     finally:
         stop.set()
         watcher.cancel()
@@ -229,9 +306,25 @@ async def run_student(bus: JobEventBus, job_id: str, youtube_url: str) -> None:
 async def run_faculty(bus: JobEventBus, job_id: str, youtube_url: str) -> None:
     t0 = time.perf_counter()
     stage = "transcript"
+    video_id = None
     try:
         await bus.emit(job_id, "started", {"mode": "faculty"})
-        video_id, chunks = await asyncio.to_thread(services.transcript_agent.process, youtube_url)
+        agent = services.get_faculty_agent()
+        prompt_version = agent.prompt_version
+        video_id = extract_youtube_video_id(youtube_url)
+
+        cached = await _safe(services.cache.get_result, video_id, "faculty", "en", prompt_version)
+        if cached is not None:
+            result = dict(cached.payload)
+            result["youtube_url"] = youtube_url
+            await bus.emit(job_id, "transcript_fetched", {"video_id": video_id, "youtube_url": youtube_url, "cached": True})
+            timings = {"cache_hit": True, "total_s": round(time.perf_counter() - t0, 3)}
+            await bus.set_result(job_id, result)
+            await bus.emit(job_id, "done", {"result": result, "timings": timings, "cached": True})
+            await _record_job(job_id, "faculty", video_id, "done", cache_hit=True, timings=timings)
+            return
+
+        video_id, chunks, transcript_from_db = await _load_or_fetch_transcript(youtube_url)
         transcript_s = round(time.perf_counter() - t0, 3)
         await bus.emit(
             job_id,
@@ -241,13 +334,20 @@ async def run_faculty(bus: JobEventBus, job_id: str, youtube_url: str) -> None:
 
         stage = "analysis"
         await bus.emit(job_id, "analyzing", {})
-        report = await asyncio.to_thread(lambda: services.get_faculty_agent().generate_report(chunks, video_id))
+        report = await asyncio.to_thread(lambda: agent.generate_report(chunks, video_id))
         result = {"video_id": video_id, "youtube_url": youtube_url, "report": report}
         await bus.set_result(job_id, result)
-        timings = {"transcript_s": transcript_s, "total_s": round(time.perf_counter() - t0, 3)}
+        timings = {
+            "transcript_s": transcript_s,
+            "transcript_cached": transcript_from_db,
+            "total_s": round(time.perf_counter() - t0, 3),
+        }
+        await _safe(services.cache.save_result, video_id, "faculty", "en", prompt_version, result, None)
         await bus.emit(job_id, "done", {"result": result, "timings": timings})
+        await _record_job(job_id, "faculty", video_id, "done", timings=timings)
     except Exception as exc:
         await _fail(bus, job_id, stage, exc)
+        await _record_job(job_id, "faculty", video_id, "failed")
 
 
 async def run_provost(bus: JobEventBus, job_id: str, youtube_urls: list[str], learning_objectives: str) -> None:
@@ -260,8 +360,7 @@ async def run_provost(bus: JobEventBus, job_id: str, youtube_urls: list[str], le
 
         for i, url in enumerate(youtube_urls):
             try:
-                video_id = extract_youtube_video_id(url)
-                _, chunks = await asyncio.to_thread(services.transcript_agent.process, url)
+                video_id, chunks, _ = await _load_or_fetch_transcript(url)
                 lectures.append(
                     {"video_id": video_id, "youtube_url": url, "chunks": [c.model_dump() for c in chunks]}
                 )

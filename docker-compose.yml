@@ -1,11 +1,14 @@
 # Local infrastructure for LectureKit.
 #
-#   docker compose up -d          # start Redis
-#   cd backend && REDIS_URL=redis://localhost:6379 uvicorn main:app --reload
+#   docker compose up -d          # start Redis + Postgres (pgvector)
+#   cd backend
+#   REDIS_URL=redis://localhost:6379 \
+#   DATABASE_URL=postgresql://postgres:postgres@localhost:5432/lecturekit \
+#   uvicorn main:app --reload
 #   cd frontend && npm run dev
 #
-# The API runs the background-job worker in-process (RUN_WORKER_IN_PROCESS=true), so Redis is
-# the only extra service for now. Postgres + pgvector join this file with roadmap item #3.
+# Both are optional: without DATABASE_URL there is no result cache and search uses local
+# ChromaDB; without REDIS_URL the frontend falls back to the blocking endpoints.
 services:
   redis:
     image: redis:7-alpine
@@ -20,5 +23,22 @@ services:
       timeout: 3s
       retries: 10
 
+  postgres:
+    image: pgvector/pgvector:pg16
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: lecturekit
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
 volumes:
   redis-data:
+  pg-data:

@@ -27,7 +27,7 @@ if str(BACKEND_DIR) not in sys.path:
 class FakeEmbedder:
     """Bag-of-words hashing embedder: same words -> similar vectors. No downloads."""
 
-    dim = 64
+    dim = 384
 
     def __init__(self, *_args, **_kwargs) -> None:
         pass

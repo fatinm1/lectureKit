@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import hashlib
+import inspect
 import os
 import re
 from typing import Sequence
@@ -22,6 +24,12 @@ class FacultyAgent:
 
         self.client = anthropic.Anthropic(api_key=api_key)
         self.model = (os.getenv("ANTHROPIC_MODEL") or "claude-sonnet-4-6").strip()
+
+    @property
+    def prompt_version(self) -> str:
+        """Cache key component: hash of the prompt-building code + model (see StreamingContentAgent)."""
+        source = inspect.getsource(FacultyAgent._build_prompt)
+        return "faculty-" + hashlib.sha256(f"{self.model}\n{source}".encode("utf-8")).hexdigest()[:12]
 
     def generate_report(self, chunks: Sequence[TranscriptChunk], video_id: str) -> dict:
         transcript_text = self._format_transcript(chunks)

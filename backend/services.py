@@ -26,6 +26,8 @@ from agents.transcript_agent import (
     TranscriptUnavailableError,
 )
 from agents.translate_agent import TranslateAgent, TranslateAgentError
+from db.cache import Cache
+from db.store import Store
 from utils.youtube import InvalidYouTubeUrlError
 
 # Step: Load environment variables from backend/.env before reading configuration.
@@ -51,10 +53,16 @@ def _write_youtube_cookies() -> None:
 
 _write_youtube_cookies()
 
+# Step: Optional persistence. With DATABASE_URL: transcripts, embeddings (pgvector) and
+# generated results live in Postgres; with REDIS_URL too, hot reads are cached in Redis.
+store = Store.from_env()
+cache = Cache.from_env(store)
+
 # Step: Agent 1 is stateless and safe to reuse.
 transcript_agent = TranscriptAgent()
-# Step: Agent 3 loads a local embedding model and persistent Chroma client once.
-search_agent = SearchAgent()
+# Step: Agent 3 loads the embedding model once; vectors go to pgvector when `store` is set,
+# otherwise to a local ChromaDB directory.
+search_agent = SearchAgent(store=store)
 
 # Step: Lazy-init Claude-backed agents so Railway healthchecks pass before ANTHROPIC_API_KEY is set.
 _content_agent: Optional[ContentAgent] = None
