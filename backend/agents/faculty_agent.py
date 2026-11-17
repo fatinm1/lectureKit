@@ -9,7 +9,22 @@ from typing import Sequence
 
 import anthropic
 
+from agents.structured_call import StructuredOutputError, call_structured, make_tool
 from models.schemas import TranscriptChunk
+from models.structured import FacultyReport
+
+FACULTY_TOOL = make_tool(
+    "record_faculty_audit",
+    "Record the private pedagogical audit report for the lecture.",
+    FacultyReport,
+)
+
+FACULTY_SYSTEM = (
+    "You are an expert pedagogical reviewer analyzing a lecture transcript for a faculty member. "
+    "The report is PRIVATE and only for that faculty member; it is not surveillance. "
+    "Be constructive, specific and actionable, and respond entirely in English regardless of the "
+    "transcript's language."
+)
 
 
 class FacultyAgentError(Exception):
@@ -27,27 +42,65 @@ class FacultyAgent:
 
     @property
     def prompt_version(self) -> str:
-        """Cache key component: hash of the prompt-building code + model (see StreamingContentAgent)."""
-        source = inspect.getsource(FacultyAgent._build_prompt)
-        return "faculty-" + hashlib.sha256(f"{self.model}\n{source}".encode("utf-8")).hexdigest()[:12]
+        """Cache key component: hash of the prompts, tool schema and model (see StreamingContentAgent)."""
+        material = "\n".join(
+            [
+                self.model,
+                FACULTY_SYSTEM,
+                repr(FACULTY_TOOL),
+                inspect.getsource(FacultyAgent._build_tool_prompt),
+                inspect.getsource(FacultyAgent._build_prompt),
+            ]
+        )
+        return "faculty-" + hashlib.sha256(material.encode("utf-8")).hexdigest()[:12]
 
     def generate_report(self, chunks: Sequence[TranscriptChunk], video_id: str) -> dict:
+        """Forced `record_faculty_audit` tool call validated by FacultyReport (see structured_call)."""
         transcript_text = self._format_transcript(chunks)
-        prompt = self._build_prompt(transcript_text=transcript_text, video_id=video_id)
+        max_ts = float(chunks[-1].end) if chunks else None
 
-        response = self.client.messages.create(
-            model=self.model,
-            max_tokens=8000,
-            messages=[{"role": "user", "content": prompt}],
-        )
+        def legacy() -> dict:
+            prompt = self._build_prompt(transcript_text=transcript_text, video_id=video_id)
+            response = self.client.messages.create(
+                model=self.model, max_tokens=8000, messages=[{"role": "user", "content": prompt}]
+            )
+            raw = "\n".join(
+                t for b in (getattr(response, "content", []) or []) if isinstance(t := getattr(b, "text", None), str)
+            )
+            return self._parse_json_response(raw.strip())
 
-        parts: list[str] = []
-        for block in getattr(response, "content", []) or []:
-            text = getattr(block, "text", None)
-            if isinstance(text, str):
-                parts.append(text)
-        raw = "\n".join(parts).strip()
-        return self._parse_json_response(raw)
+        try:
+            result = call_structured(
+                self.client,
+                agent="faculty",
+                model=self.model,
+                system=FACULTY_SYSTEM,
+                user=self._build_tool_prompt(transcript_text=transcript_text, video_id=video_id),
+                tools=[FACULTY_TOOL],
+                tool_name=FACULTY_TOOL["name"],
+                model_cls=FacultyReport,
+                max_tokens=8000,
+                context={"max_timestamp": max_ts} if max_ts else {},
+                legacy_fallback=legacy,
+            )
+        except StructuredOutputError as exc:
+            raise FacultyAgentError(str(exc)) from exc
+        return result.value.model_dump()
+
+    def _build_tool_prompt(self, *, transcript_text: str, video_id: str) -> str:
+        return f"""Audit this lecture and call {FACULTY_TOOL["name"]} with the report.
+
+VIDEO_ID: {video_id}
+
+TRANSCRIPT:
+{transcript_text}
+
+Rules:
+- Timestamps are seconds and must point to real moments in the transcript ([MM:SS] markers).
+- suggested_rewrite must be specific, usable replacement text, not vague advice.
+- prioritized_fixes: exactly 5, ordered by impact (priority 1 first).
+- top_priority_fix is the single most impactful change the faculty member could make.
+- Be honest but constructive: this is to help the faculty member improve."""
 
     def _format_transcript(self, chunks: Sequence[TranscriptChunk]) -> str:
         lines: list[str] = []

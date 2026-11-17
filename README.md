@@ -73,7 +73,7 @@ A provost pastes multiple lecture URLs and their course learning objectives and 
 - **Prompt caching:** both calls share a system prompt holding the transcript (`cache_control: ephemeral`). The structured call starts once the streaming call has begun responding, so it reads the transcript from cache instead of paying for it twice. Token usage, including cache reads, is reported per call in each job's `done` event
 - **Stop button:** both calls stream, so pressing Stop closes them within about half a second, which stops generation and billing. Whatever was written so far is kept
 - The blocking `/process` fallback still uses a single call
-- 4-strategy JSON fallback parser handles markdown fences and preamble text
+- Outline, flashcards, faculty audits and curriculum maps come back as **structured output**: a forced tool call whose input schema is generated from Pydantic models (see below)
 - Explicit English output regardless of transcript language
 
 ### Agent 3 — Search Agent
@@ -302,7 +302,7 @@ npm run dev
 | GET | /health | Health check |
 | POST | /jobs | Enqueue a student / faculty / provost run; returns `job_id` immediately (202) |
 | GET | /jobs/{job_id} | Job status and final result |
-| GET | /metrics | Cache hit rates, latency for hits vs misses, Claude tokens/$ spent and saved |
+| GET | /metrics | Structured-output path counts and parse-failure rate, cache hit rates, latency for hits vs misses, Claude tokens/$ spent and saved |
 | POST | /jobs/{job_id}/cancel | Stop a running student job; keeps what was generated so far |
 | GET | /jobs/{job_id}/events | Server-Sent Events progress stream (replays from start or `Last-Event-ID`) |
 | POST | /process | Student mode, blocking (fallback when Redis isn't configured) |
@@ -379,7 +379,16 @@ lectureKit/
 
 **YouTube seekTo:** Every timestamp in the app seeks the embedded YouTube player using the iframe postMessage API with enablejsapi=1 and the page origin in the embed URL.
 
-**4-strategy JSON parser:** Claude occasionally wraps responses in markdown fences or adds preamble text. The parser tries: strip fences → extract outermost braces → raw loads → raise with first 200 chars. If all fail, one repair call sends back only the broken output (not the whole transcript).
+**Structured outputs instead of JSON repair:** every structured result (study outline + flashcards, faculty audit, curriculum map) is a forced tool call (`tool_choice: {"type": "tool"}`) whose `input_schema` is generated from a Pydantic model. Claude returns arguments that already have the right shape, so there are no markdown fences or truncated text to repair. The Pydantic validators then check what JSON Schema can't:
+- timestamps fall inside the lecture
+- the outline is chronological
+- exactly 10 flashcards and 5 prioritized fixes
+- `coverage_distribution` matches the per-objective statuses
+- cited lecture numbers exist
+
+A failed check goes back to Claude once as an `is_error` tool result listing the exact errors, so the retry is a correction in context. The old text prompt and 4-strategy parser (strip fences → outermost braces → raw loads → repair call) stay as a last resort. Each call's path (`tool`, `tool_retry`, `legacy_fallback`, `failed`) is counted, and `GET /metrics` reports the first-try rate and parse-failure rate per agent.
+
+The streamed summaries call carries the same tool list with `tool_choice: none`. Tools are the first part of Anthropic's prompt-cache prefix (tools → system → messages), so this keeps both calls on one cached transcript.
 
 ---
 

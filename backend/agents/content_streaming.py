@@ -33,7 +33,9 @@ from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 from agents.content_agent import ContentAgent, ContentAgentError
+from agents.structured_call import StructuredCallCancelled, StructuredOutputError, call_structured, make_tool
 from models.schemas import Flashcard, OutlineItem, TranscriptChunk
+from models.structured import StudyStructure
 
 SECTIONS: Tuple[str, ...] = ("summary_90s", "summary_5min", "summary_full")
 _MARKERS: Dict[str, str] = {
@@ -42,6 +44,14 @@ _MARKERS: Dict[str, str] = {
     "@@SUMMARY_FULL@@": "summary_full",
 }
 _MAX_MARKER_LEN = max(len(m) for m in _MARKERS)
+
+# Both calls send this same tool list: tools are the first part of the prompt-cache prefix
+# (tools → system → messages), so the summaries call carries it too, with tool_choice "none".
+STUDY_TOOL = make_tool(
+    "record_study_kit",
+    "Record the outline and flashcards for the lecture.",
+    StudyStructure,
+)
 
 # How long the structured call waits for the summaries call to warm the prompt cache.
 CACHE_WARM_TIMEOUT_S = 8.0
@@ -142,6 +152,8 @@ class StructuredContent:
     outline: List[OutlineItem]
     flashcards: List[Flashcard]
     usage: CallUsage = field(default_factory=CallUsage)
+    path: str = "tool"  # which structured_call path produced it
+    attempts: int = 1
 
 
 @dataclass
@@ -168,6 +180,7 @@ class StreamingContentAgent(ContentAgent):
                 repr(self._system_blocks("")),
                 self._summaries_instruction(),
                 self._structured_instruction(),
+                repr(STUDY_TOOL),
                 "summaries:4000/structured:6000",
             ]
         )
@@ -213,6 +226,16 @@ class StreamingContentAgent(ContentAgent):
     @staticmethod
     def _structured_instruction() -> str:
         return (
+            f"Call {STUDY_TOOL['name']} with the outline and flashcards for this lecture.\n"
+            "- outline: 5 to 8 main topics in chronological order; timestamp in seconds where each topic starts.\n"
+            "- flashcards: EXACTLY 10, testing understanding/application, not just recall. "
+            "Answers are 2 to 4 sentences. Spread them across the whole lecture.\n"
+            "- Every timestamp must be a real moment from the transcript's [timestamp: Xs] markers."
+        )
+
+    @staticmethod
+    def _legacy_structured_instruction() -> str:
+        return (
             "Return ONLY valid JSON (no markdown, no backticks, no commentary) with EXACTLY this structure:\n"
             "{\n"
             '  "outline": [{"timestamp": 0.0, "title": "Topic title", "description": "One sentence"}],\n'
@@ -251,6 +274,8 @@ class StreamingContentAgent(ContentAgent):
                 model=self._model,
                 max_tokens=4000,
                 system=self._system_blocks(transcript),
+                tools=[STUDY_TOOL],
+                tool_choice={"type": "none"},
                 messages=[{"role": "user", "content": self._summaries_instruction()}],
             ) as stream:
                 for piece in stream.text_stream:
@@ -287,7 +312,12 @@ class StreamingContentAgent(ContentAgent):
         should_stop: Callable[[], bool] = lambda: False,
         cache_warm: Optional[threading.Event] = None,
     ) -> StructuredContent:
-        """Outline + flashcards as JSON, after the summaries call has warmed the prompt cache."""
+        """
+        Outline + flashcards via a forced `record_study_kit` tool call, validated against
+        StudyStructure (counts, timestamps inside the lecture, chronological outline), with one
+        corrective retry and the old text-JSON path as a last resort. Starts once the summaries
+        call has warmed the prompt cache.
+        """
         if not chunks:
             raise ContentAgentError("ContentAgent received no transcript chunks.")
         transcript = self._format_timestamped_transcript(chunks)
@@ -299,38 +329,57 @@ class StreamingContentAgent(ContentAgent):
                 if time.perf_counter() > deadline:
                     break
 
-        t0 = time.perf_counter()
-        first_token_s: Optional[float] = None
-        parts: List[str] = []
-        try:
+        system = self._system_blocks(transcript)
+
+        def legacy() -> dict:
+            # Last resort: the pre-tool-use prompt, read as text and repaired by the 4-strategy parser.
+            parts: List[str] = []
             with self._client.messages.stream(
                 model=self._model,
                 max_tokens=6000,
-                system=self._system_blocks(transcript),
-                messages=[{"role": "user", "content": self._structured_instruction()}],
+                system=system,
+                tools=[STUDY_TOOL],
+                tool_choice={"type": "none"},
+                messages=[{"role": "user", "content": self._legacy_structured_instruction()}],
             ) as stream:
                 for piece in stream.text_stream:
-                    if first_token_s is None:
-                        first_token_s = time.perf_counter() - t0
                     if should_stop():
-                        raise ContentCancelled()
+                        raise StructuredCallCancelled()
                     parts.append(piece)
-                message = stream.get_final_message()
-        except ContentCancelled:
-            raise
-        except Exception as exc:
-            raise ContentAgentError(f"Claude structured call failed: {type(exc).__name__}: {exc}") from exc
+            return self._parse_json_with_retry("".join(parts), transcript=transcript)
 
-        parsed = self._parse_json_with_retry("".join(parts), transcript=transcript)
         try:
-            outline = [OutlineItem.model_validate(o) for o in parsed.get("outline") or []]
-            flashcards = [Flashcard.model_validate(f) for f in parsed.get("flashcards") or []]
-        except Exception as exc:
-            raise ContentAgentError("Claude returned JSON but it did not match the expected schema.") from exc
-        if not outline or not flashcards:
-            raise ContentAgentError("Claude returned an empty outline or no flashcards.")
+            result = call_structured(
+                self._client,
+                agent="student",
+                model=self._model,
+                system=system,
+                user=self._structured_instruction(),
+                tools=[STUDY_TOOL],
+                tool_name=STUDY_TOOL["name"],
+                model_cls=StudyStructure,
+                max_tokens=6000,
+                context={"max_timestamp": float(chunks[-1].end)},
+                should_stop=should_stop,
+                legacy_fallback=legacy,
+            )
+        except StructuredCallCancelled as exc:
+            raise ContentCancelled() from exc
+        except StructuredOutputError as exc:
+            raise ContentAgentError(str(exc)) from exc
+
+        u = result.usage
         return StructuredContent(
-            outline=outline,
-            flashcards=flashcards,
-            usage=CallUsage.from_message(message, time.perf_counter() - t0, first_token_s),
+            outline=list(result.value.outline),
+            flashcards=list(result.value.flashcards),
+            usage=CallUsage(
+                input_tokens=u.get("input_tokens", 0),
+                output_tokens=u.get("output_tokens", 0),
+                cache_creation_input_tokens=u.get("cache_creation_input_tokens", 0),
+                cache_read_input_tokens=u.get("cache_read_input_tokens", 0),
+                seconds=u.get("seconds", 0.0),
+                first_token_s=u.get("first_token_s"),
+            ),
+            path=result.path,
+            attempts=int(u.get("attempts", 1)),
         )
