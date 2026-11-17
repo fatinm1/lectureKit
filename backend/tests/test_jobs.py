@@ -20,9 +20,11 @@ from redis.asyncio import Redis as AsyncRedis
 
 import services
 from agents.transcript_agent import TranscriptUnavailableError
+from agents.content_streaming import StreamingContentAgent
+from fake_claude import FakeClaude
 from jobs import pipeline
 from jobs.events import JobEventBus
-from models.schemas import ContentAgentResult, Flashcard, OutlineItem, TranscriptChunk
+from models.schemas import TranscriptChunk
 
 REDIS_URL = os.getenv("TEST_REDIS_URL", "")
 VIDEO_URL = "https://www.youtube.com/watch?v=jNQXAC9IVRw"
@@ -55,36 +57,29 @@ def _chunks():
     ]
 
 
-def _content():
-    return ContentAgentResult(
-        outline=[OutlineItem(timestamp=0, title="Intro", description="d")],
-        summary_90s="s90",
-        summary_5min="s5",
-        summary_full="sf",
-        flashcards=[Flashcard(question="q", answer="a", source_timestamp=0)] * 10,
-    )
+def _streaming_agent(**fake_kwargs) -> StreamingContentAgent:
+    agent = StreamingContentAgent()
+    agent._client = FakeClaude(**fake_kwargs)
+    return agent
 
 
 @pytest.fixture()
 def fake_agents(monkeypatch):
-    """Transcript 0.1s, indexing 0.1s, Claude content 0.5s: indexing must surface first."""
+    """Transcript 0.1s, indexing 0.1s; summaries stream for ~0.6s, structured JSON ~0.4s."""
 
     def transcript(url):
         time.sleep(0.1)
         return "jNQXAC9IVRw", _chunks()
 
-    class Content:
-        def process(self, chunks):
-            time.sleep(0.5)
-            return _content()
-
     def index(video_id, chunks):
         time.sleep(0.1)
         return True
 
+    agent = _streaming_agent(summary_delay=0.02, structured_delay=0.05)
     monkeypatch.setattr(services.transcript_agent, "process", transcript)
-    monkeypatch.setattr(services, "get_content_agent", lambda: Content())
+    monkeypatch.setattr(services, "get_streaming_content_agent", lambda: agent)
     monkeypatch.setattr(services.search_agent, "index_chunks", index)
+    return agent
 
 
 async def _events(job_id: str) -> list:
@@ -108,27 +103,79 @@ def test_student_pipeline_streams_stages_in_order(fake_agents):
     job = asyncio.run(run())
     events = asyncio.run(_events("j1"))
     types = [e.type for e in events]
-    assert types == [
-        "queued",
-        "started",
-        "transcript_fetched",
-        "chunks_indexed",  # indexing finishes before Claude, so it arrives first
-        "outline_ready",
-        "summaries_ready",
-        "flashcards_ready",
-        "done",
-    ]
+    assert types[:3] == ["queued", "started", "transcript_fetched"]
+    assert types[-1] == "done"
+    # Summary text streams in many small events, and the first one arrives before the
+    # structured outline/flashcards are ready.
+    deltas = [e for e in events if e.type == "summary_delta"]
+    assert len(deltas) >= 3
+    assert types.index("summary_delta") < types.index("outline_ready")
+    assert types.index("outline_ready") < types.index("flashcards_ready")
+    assert {"chunks_indexed", "summaries_ready"} <= set(types)
+    # Concatenated deltas == the final summaries.
     by_type = {e.type: e.data for e in events}
-    assert by_type["transcript_fetched"]["video_id"] == "jNQXAC9IVRw"
-    assert by_type["chunks_indexed"]["indexed"] is True
-    # The first visible content (video + search) is ready long before the full kit.
-    assert by_type["transcript_fetched"]["t"] < by_type["done"]["t"]
+    streamed = "".join(d.data["text"] for d in deltas if d.data["section"] == "summary_90s").strip()
+    assert streamed == by_type["summaries_ready"]["summary_90s"]
     timings = by_type["done"]["timings"]
-    assert {"transcript_s", "index_s", "content_s", "total_s"} <= set(timings)
-    # Content and indexing ran concurrently: total ≈ transcript + max(content, index).
-    assert timings["total_s"] < timings["transcript_s"] + timings["content_s"] + timings["index_s"]
+    assert timings["first_summary_token_s"] < timings["structured_s"] < timings["total_s"]
+    # The structured call read the transcript from the prompt cache written by the stream.
+    assert timings["usage"]["structured"]["cache_read_input_tokens"] > 0
     assert job["status"] == "done"
-    assert job["result"]["summary_90s"] == "s90" and "chunks" not in job["result"]
+    assert job["result"]["summary_90s"].startswith("Gradient descent") and "chunks" not in job["result"]
+    assert len(job["result"]["flashcards"]) == 10
+
+
+def test_stop_cancels_claude_streams_and_keeps_partial_kit(monkeypatch, fake_agents):
+    # Slow summaries so we can stop half-way.
+    agent = _streaming_agent(summary_delay=0.05, structured_delay=0.2)
+    monkeypatch.setattr(services, "get_streaming_content_agent", lambda: agent)
+
+    async def run():
+        r = AsyncRedis.from_url(REDIS_URL)
+        bus = JobEventBus(r)
+        await bus.create("jc", "student", {})
+        task = asyncio.create_task(pipeline.run_student(bus, "jc", VIDEO_URL))
+        # Wait for some summary text, then press Stop.
+        for _ in range(100):
+            if any(e.type == "summary_delta" for e in await bus.history("jc")):
+                break
+            await asyncio.sleep(0.05)
+        t = time.perf_counter()
+        await bus.request_cancel("jc")
+        await task
+        stop_latency = time.perf_counter() - t
+        job = await bus.get("jc")
+        await r.aclose()
+        return job, stop_latency
+
+    job, stop_latency = asyncio.run(run())
+    events = asyncio.run(_events("jc"))
+    types = [e.type for e in events]
+    assert types[-1] == "cancelled" and "done" not in types
+    assert stop_latency < 1.5
+    assert agent._client.closed_early.get("summaries") is True  # stream closed → generation stops
+    partial = events[-1].data["result"]
+    assert partial["video_id"] == "jNQXAC9IVRw"
+    assert partial["summary_90s"]  # what streamed before Stop is kept
+    assert job["status"] == "cancelled"
+
+
+def test_claude_failure_stops_the_other_call(monkeypatch, fake_agents):
+    agent = _streaming_agent(summary_delay=0.01, structured_delay=0.05, fail={"summaries"})
+    monkeypatch.setattr(services, "get_streaming_content_agent", lambda: agent)
+
+    async def run():
+        r = AsyncRedis.from_url(REDIS_URL)
+        bus = JobEventBus(r)
+        await bus.create("jf", "student", {})
+        await pipeline.run_student(bus, "jf", VIDEO_URL)
+        await r.aclose()
+
+    asyncio.run(run())
+    events = asyncio.run(_events("jf"))
+    assert events[-1].type == "failed" and events[-1].data["stage"] == "content"
+    assert "summary stream failed" in events[-1].data["message"]
+    assert "done" not in [e.type for e in events]
 
 
 def test_failure_is_reported_as_event(monkeypatch):
@@ -193,7 +240,7 @@ def live_client(monkeypatch, fake_agents):
         yield client
 
 
-def _read_sse(client, url, headers=None, stop_at=("done", "failed"), max_events=50):
+def _read_sse(client, url, headers=None, stop_at=("done", "failed", "cancelled"), max_events=500):
     events = []
     with client.stream("GET", url, headers=headers or {}) as r:
         assert r.status_code == 200
@@ -261,6 +308,22 @@ def test_sse_does_not_block_other_requests(live_client):
 def test_invalid_url_rejected_before_enqueue(live_client):
     r = live_client.post("/jobs", json={"mode": "student", "youtube_url": "https://example.com/x"})
     assert r.status_code == 422
+
+
+def test_cancel_endpoint(live_client):
+    job_id = live_client.post("/jobs", json={"mode": "student", "youtube_url": VIDEO_URL}).json()["job_id"]
+    first = _read_sse(live_client, f"/jobs/{job_id}/events", stop_at=("transcript_fetched",))
+    assert live_client.post(f"/jobs/{job_id}/cancel").json()["status"] in ("cancelling", "done")
+    rest = _read_sse(
+        live_client,
+        f"/jobs/{job_id}/events",
+        headers={"Last-Event-ID": first[-1]["id"]},
+        stop_at=("done", "failed", "cancelled"),
+    )
+    assert rest[-1]["event"] in ("cancelled", "done")
+    # Cancelling a finished job is a no-op.
+    assert live_client.post(f"/jobs/{job_id}/cancel").json()["status"] in ("cancelled", "done")
+    assert live_client.post("/jobs/nope/cancel").status_code == 404
 
 
 def test_unknown_job_is_404(live_client):

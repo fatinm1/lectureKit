@@ -20,7 +20,7 @@ import { MarketingScrollReveal } from "../components/marketing/MarketingScrollRe
 
 import type { LectureSession } from "../../types/lecture";
 import { formatTimestamp } from "../../utils/format";
-import { fetchJob, subscribeToJob, type StudentResult } from "../../utils/jobs";
+import { cancelJob, fetchJob, subscribeToJob, type StudentResult, type SummarySection } from "../../utils/jobs";
 
 type PendingSections = { outline: boolean; summaries: boolean; flashcards: boolean; index: boolean };
 
@@ -44,6 +44,15 @@ function emptySession(): LectureSession {
 
 function sessionFromResult(result: StudentResult): LectureSession {
   return { ...result, processed_at: new Date().toISOString() };
+}
+
+function StreamingCursor(): JSX.Element {
+  return (
+    <span
+      aria-hidden
+      className="ml-0.5 inline-block h-4 w-[2px] translate-y-[3px] bg-[#5e6ad2] motion-safe:animate-pulse motion-reduce:animate-none"
+    />
+  );
 }
 
 function PendingNote({ label }: { label: string }): JSX.Element {
@@ -174,6 +183,10 @@ export default function StudyPage(): JSX.Element {
   const [pending, setPending] = useState<PendingSections>(NOTHING_PENDING);
   const [jobError, setJobError] = useState<string | null>(null);
   const [readyIn, setReadyIn] = useState<number | null>(null);
+  const [streamingSection, setStreamingSection] = useState<SummarySection | null>(null);
+  const [stopping, setStopping] = useState(false);
+  const [stoppedNote, setStoppedNote] = useState<string | null>(null);
+  const jobIdRef = useRef<string | null>(null);
   const isBuilding = pending.outline || pending.summaries || pending.flashcards || pending.index;
 
   const translationCacheRef = useRef<Map<LanguageCode, Partial<LectureSession>>>(new Map());
@@ -189,6 +202,7 @@ export default function StudyPage(): JSX.Element {
     const jobId = new URLSearchParams(window.location.search).get("job");
 
     if (jobId) {
+      jobIdRef.current = jobId;
       // Live mode: build the session from the job's event stream.
       let current = emptySession();
       const apply = (patch: Partial<LectureSession>) => {
@@ -220,6 +234,13 @@ export default function StudyPage(): JSX.Element {
               apply({ indexed: event.data.indexed });
               setPending((p) => ({ ...p, index: false }));
               return;
+            case "summary_delta": {
+              const { section, text } = event.data;
+              apply({ [section]: (current[section] ?? "") + text } as Partial<LectureSession>);
+              setStreamingSection(section);
+              setPending((p) => (p.summaries ? { ...p, summaries: false } : p));
+              return;
+            }
             case "outline_ready":
               apply({ outline: event.data.outline });
               setPending((p) => ({ ...p, outline: false }));
@@ -231,6 +252,7 @@ export default function StudyPage(): JSX.Element {
                 summary_full: event.data.summary_full,
               });
               setPending((p) => ({ ...p, summaries: false }));
+              setStreamingSection(null);
               return;
             case "flashcards_ready":
               apply({ flashcards: event.data.flashcards });
@@ -245,8 +267,24 @@ export default function StudyPage(): JSX.Element {
             }
             case "failed":
               setPending(NOTHING_PENDING);
+              setStreamingSection(null);
               setJobError(event.data.message || "Processing failed.");
               return;
+            case "cancelled": {
+              // Keep everything generated before Stop, in a session that survives refresh.
+              setStreamingSection(null);
+              setStopping(false);
+              const r = event.data.result;
+              finish({
+                ...current,
+                ...r,
+                outline: r.outline ?? current.outline,
+                flashcards: r.flashcards ?? current.flashcards,
+                processed_at: new Date().toISOString(),
+              } as LectureSession);
+              setStoppedNote("Stopped. Kept everything generated before you pressed Stop.");
+              return;
+            }
             default:
               return;
           }
@@ -320,6 +358,8 @@ export default function StudyPage(): JSX.Element {
       );
     }
   };
+
+  const activeSection = `summary_${summaryDepth}` as SummarySection;
 
   const activeSummary = useMemo(() => {
     if (!session) return "";
@@ -618,7 +658,28 @@ export default function StudyPage(): JSX.Element {
           <span className="font-mono text-[#5e6ad2]">video_id: {session.video_id}</span>
           <span>{session.chunk_count} chunks processed</span>
           {isBuilding ? (
-            <span className="text-[#5e6ad2] motion-safe:animate-pulse motion-reduce:animate-none">Building study kit…</span>
+            <span className="flex items-center gap-3">
+              <span className="text-[#5e6ad2] motion-safe:animate-pulse motion-reduce:animate-none">
+                {stopping ? "Stopping…" : "Building study kit…"}
+              </span>
+              <button
+                type="button"
+                disabled={stopping}
+                onClick={() => {
+                  const id = jobIdRef.current;
+                  if (!id) return;
+                  setStopping(true);
+                  void cancelJob(id).then((ok) => {
+                    if (!ok) setStopping(false);
+                  });
+                }}
+                className="rounded-full border border-zinc-700 px-3 py-0.5 text-xs text-zinc-300 transition-colors hover:border-zinc-500 hover:text-white disabled:opacity-50"
+              >
+                Stop
+              </button>
+            </span>
+          ) : stoppedNote ? (
+            <span>{stoppedNote}</span>
           ) : readyIn !== null ? (
             <span>Study kit ready in {readyIn.toFixed(1)}s</span>
           ) : (
@@ -714,8 +775,13 @@ export default function StudyPage(): JSX.Element {
               <div className="mt-6">
                 {pending.summaries ? (
                   <PendingNote label="Writing summaries…" />
+                ) : activeSummary || !streamingSection ? (
+                  <p className="whitespace-pre-line text-sm leading-relaxed text-zinc-300">
+                    {activeSummary}
+                    {streamingSection === activeSection ? <StreamingCursor /> : null}
+                  </p>
                 ) : (
-                  <p className="whitespace-pre-line text-sm leading-relaxed text-zinc-300">{activeSummary}</p>
+                  <PendingNote label="Writing this summary…" />
                 )}
               </div>
             </div>
@@ -761,8 +827,13 @@ export default function StudyPage(): JSX.Element {
                   <MarketingScrollReveal className="max-h-[60vh] overflow-auto rounded-xl border border-white/5 bg-zinc-900/50 p-4 pr-2 transition-colors hover:border-white/10">
                     {pending.summaries ? (
                       <PendingNote label="Writing summaries…" />
+                    ) : activeSummary || !streamingSection ? (
+                      <p className="whitespace-pre-line text-sm leading-relaxed text-zinc-300">
+                        {activeSummary}
+                        {streamingSection === activeSection ? <StreamingCursor /> : null}
+                      </p>
                     ) : (
-                      <p className="whitespace-pre-line text-sm leading-relaxed text-zinc-300">{activeSummary}</p>
+                      <PendingNote label="Writing this summary…" />
                     )}
                   </MarketingScrollReveal>
                 </div>

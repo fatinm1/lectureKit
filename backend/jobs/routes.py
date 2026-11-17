@@ -3,6 +3,7 @@ Purpose: HTTP surface for background jobs.
 
 - POST /jobs                  enqueue a student / faculty / provost run, returns {job_id} immediately
 - GET  /jobs/{job_id}         current status + final result (polling fallback, page reloads)
+- POST /jobs/{job_id}/cancel  stop a running student job (Stop button)
 - GET  /jobs/{job_id}/events  Server-Sent Events: every progress event, replayed from the start
                               (or from Last-Event-ID), then live until `done` / `failed`
 
@@ -143,6 +144,23 @@ async def get_job(job_id: str, request: Request) -> dict[str, Any]:
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found or expired.")
     return {"job_id": job_id, **job}
+
+
+@router.post("/{job_id}/cancel", status_code=202)
+async def cancel_job(job_id: str, request: Request) -> dict[str, Any]:
+    """
+    Ask a running student job to stop. The worker aborts its Claude streams within about
+    half a second (closing a stream stops generation and billing) and emits `cancelled`
+    with whatever was generated so far. No-op for jobs that already finished.
+    """
+    bus = JobEventBus(_pool(request))
+    job = await bus.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found or expired.")
+    if job.get("status") in ("done", "failed", "cancelled"):
+        return {"job_id": job_id, "status": job["status"]}
+    await bus.request_cancel(job_id)
+    return {"job_id": job_id, "status": "cancelling"}
 
 
 @router.get("/{job_id}/events")

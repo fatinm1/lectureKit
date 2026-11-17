@@ -3,6 +3,7 @@
  *
  * Data flow:
  * - createJob() enqueues work and returns a job_id right away (HTTP 202).
+ * - Summaries arrive as `summary_delta` pieces while Claude writes them; cancelJob() is the Stop button.
  * - subscribeToJob() opens an EventSource. The server replays every event from the start
  *   (Redis Stream), so a late subscriber, e.g. /study after a page navigation or refresh,
  *   still receives transcript_fetched, outline_ready, ... in order. If the connection drops,
@@ -42,6 +43,8 @@ export type JobEventMap = {
   started: { mode: JobMode; total?: number };
   transcript_fetched: { video_id: string; youtube_url: string; chunk_count: number; duration_s?: number };
   chunks_indexed: { indexed: boolean };
+  /** A piece of summary text, streamed as Claude writes it. Append to `section`. */
+  summary_delta: { section: SummarySection; text: string };
   outline_ready: { outline: OutlineItem[] };
   summaries_ready: { summary_90s: string; summary_5min: string; summary_full: string };
   flashcards_ready: { flashcards: Flashcard[] };
@@ -50,7 +53,11 @@ export type JobEventMap = {
   analyzing: { lecture_count?: number };
   done: { result: StudentResult | FacultyResult | ProvostResult; timings: Record<string, number> };
   failed: { stage: string; status: number; message: string };
+  /** The user pressed Stop; `result` holds whatever was generated before that. */
+  cancelled: { result: Partial<StudentResult> };
 };
+
+export type SummarySection = "summary_90s" | "summary_5min" | "summary_full";
 
 export type JobEventType = keyof JobEventMap;
 export type JobEvent = { [K in JobEventType]: { type: K; data: JobEventMap[K] & { t: number } } }[JobEventType];
@@ -60,6 +67,7 @@ const EVENT_TYPES: JobEventType[] = [
   "started",
   "transcript_fetched",
   "chunks_indexed",
+  "summary_delta",
   "outline_ready",
   "summaries_ready",
   "flashcards_ready",
@@ -68,6 +76,7 @@ const EVENT_TYPES: JobEventType[] = [
   "analyzing",
   "done",
   "failed",
+  "cancelled",
 ];
 
 export function getApiBaseUrl(): string {
@@ -141,7 +150,7 @@ export function subscribeToJob(
         return;
       }
       onEvent({ type, data } as JobEvent);
-      if (type === "done" || type === "failed") close();
+      if (type === "done" || type === "failed" || type === "cancelled") close();
     });
   }
 
@@ -157,6 +166,16 @@ export function subscribeToJob(
   };
 
   return { close };
+}
+
+/** Ask the server to stop a running job (Stop button). Resolves false if the request failed. */
+export async function cancelJob(jobId: string): Promise<boolean> {
+  try {
+    const r = await fetch(`${getApiBaseUrl()}/jobs/${encodeURIComponent(jobId)}/cancel`, { method: "POST" });
+    return r.ok;
+  } catch {
+    return false;
+  }
 }
 
 /** GET /jobs/{id}: status + final result, for when SSE isn't usable. */
