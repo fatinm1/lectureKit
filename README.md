@@ -127,6 +127,27 @@ cd backend && python scripts/measure_ttfc.py --api <backend-url> <lecture-url> [
 
 ---
 
+## Persistence and Caching
+
+With `DATABASE_URL` set (Postgres + pgvector), LectureKit stores everything it would otherwise recompute:
+
+| Table | Holds | Why |
+|---|---|---|
+| `lectures` | one row per video | parent of everything else |
+| `transcript_chunks` | timestamped chunks + 384-d embedding (`vector`) | a transcript is fetched once; search survives redeploys |
+| `results` | study kits / faculty reports keyed by `(video_id, kind, language, prompt_version)` | a popular lecture is generated once and served to everyone |
+| `jobs` | every job: cache hit or not, timings, Claude token usage | source of the hit-rate and spend metrics |
+
+- **Prompt-versioned results.** `prompt_version` is a hash of the prompts, model and output limits. Edit a prompt and old results simply stop matching, so they're regenerated instead of being served stale. The transcript and embeddings are still reused.
+- **Cached jobs look like fresh ones.** A cache hit replays the same SSE events (minus the streamed text) in milliseconds, so the frontend needs no special case.
+- **Redis in front of Postgres.** Result lookups (1 h TTL) and search queries (10 min TTL, normalized text) are served from Redis first.
+- **Exact vector search.** Search is always scoped to one lecture (at most a few hundred chunks), so it runs as an exact cosine scan behind the primary-key index. An approximate HNSW index would add little and needs care to stay correct under the `video_id` filter.
+- **`GET /metrics`** reports cache hit rates, median latency for hits versus misses, Claude tokens spent, and tokens and dollars saved by the cache. The dollar figures are estimates; prices are set by environment variables.
+
+Without `DATABASE_URL` the app behaves as before: no result cache, and search uses local ChromaDB.
+
+---
+
 ## Data Flow
 
 ```text
@@ -175,7 +196,9 @@ Agent 2 and Agent 3 run in parallel in Student mode. With background jobs, every
 | Jobs | ARQ worker + Redis Streams, Server-Sent Events |
 | LLM | Claude Sonnet — claude-sonnet-4-6 |
 | Embeddings | sentence-transformers all-MiniLM-L6-v2 (local) |
-| Vector Store | ChromaDB (`CHROMA_DB_PATH`; `/tmp` on Railway is wiped on redeploy, so mount a volume) |
+| Database | Postgres + pgvector (transcripts, embeddings, cached results, job log) |
+| Cache | Redis (hot result + search cache, metrics counters) |
+| Vector Store (fallback) | ChromaDB when `DATABASE_URL` isn't set |
 | Transcript | Supadata API (primary) + yt-dlp (fallback) |
 | Deployment | Vercel (frontend) + Railway EU West (backend) |
 
@@ -190,7 +213,9 @@ Measured in production on Nov 17, 2026, with three lectures (19 min, 50 min, 2.5
 | Time to first content, blocking `/process` (before) | 69–77 s |
 | Time to first content, background jobs + SSE | **2.7–3.1 s** |
 | Search usable after submit | 4.2–6.4 s |
-| Full study kit (single Claude call) | 70–81 s |
+| First summary words, streamed (before: 70–81 s) | **3.5–4.7 s** |
+| Full study kit: one call (before) → two parallel calls | 70–81 s → **41–48 s** |
+| Transcript tokens the second call reads from prompt cache | 4.1k / 7.4k / 27.5k (all of it) |
 | `POST /jobs` server time | 14 ms |
 | Semantic search latency | <0.02 seconds |
 | Chunks from 2.5hr lecture | 50 |
@@ -205,7 +230,7 @@ Measured in production on Nov 17, 2026, with three lectures (19 min, 50 min, 2.5
 ### Backend
 
 ```bash
-docker compose up -d            # Redis, for background jobs (optional)
+docker compose up -d            # Redis + Postgres/pgvector (both optional)
 cd backend
 python3 -m venv .venv
 source .venv/bin/activate
@@ -222,8 +247,10 @@ uvicorn main:app --reload --host 0.0.0.0 --port 8000
 cd backend
 pip install pytest
 python -m pytest -q
-# Job/SSE tests also need Redis:
-TEST_REDIS_URL=redis://localhost:6379/0 python -m pytest -q
+# Job/SSE tests need Redis; storage/cache tests also need Postgres with pgvector:
+TEST_REDIS_URL=redis://localhost:6379/0 \
+TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/lecturekit \
+python -m pytest -q
 ```
 
 No API keys or network needed: Claude, transcript fetching and the embedding model are mocked.
@@ -256,6 +283,7 @@ npm run dev
 | YOUTUBE_PROXY_URL | Primary proxy URL for yt-dlp fallback |
 | YOUTUBE_PROXY_URL_1 through _9 | Additional proxy URLs tried in sequence |
 | REDIS_URL | Enables background jobs + live progress (unset → blocking endpoints only) |
+| DATABASE_URL | Postgres + pgvector: result cache, persistent search (unset → no cache, local ChromaDB) |
 | RUN_WORKER_IN_PROCESS | Run the ARQ worker inside the API process (default `true`) |
 | WORKER_MAX_JOBS | Lectures processed concurrently per worker (default `2`) |
 
@@ -274,6 +302,7 @@ npm run dev
 | GET | /health | Health check |
 | POST | /jobs | Enqueue a student / faculty / provost run; returns `job_id` immediately (202) |
 | GET | /jobs/{job_id} | Job status and final result |
+| GET | /metrics | Cache hit rates, latency for hits vs misses, Claude tokens/$ spent and saved |
 | POST | /jobs/{job_id}/cancel | Stop a running student job; keeps what was generated so far |
 | GET | /jobs/{job_id}/events | Server-Sent Events progress stream (replays from start or `Last-Event-ID`) |
 | POST | /process | Student mode, blocking (fallback when Redis isn't configured) |
@@ -294,6 +323,9 @@ lectureKit/
 │   ├── main.py                   # FastAPI app, all endpoints, CORS
 │   ├── services.py               # Shared agent singletons + error classification
 │   ├── budget.py                 # Per-process rate/concurrency guard for AI routes
+│   ├── db/
+│   │   ├── store.py              # Postgres + pgvector: schema, transcripts, embeddings, results, job log
+│   │   └── cache.py              # Redis read-through cache + hit/miss and token counters
 │   ├── jobs/
 │   │   ├── routes.py             # POST /jobs, GET /jobs/{id}, SSE /jobs/{id}/events, lifespan
 │   │   ├── pipeline.py           # Student / Faculty / Provost pipelines that emit stage events

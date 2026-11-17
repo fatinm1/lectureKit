@@ -47,11 +47,28 @@ cd backend
 python scripts/measure_ttfc.py --api $API <url1> <url2> <url3>
 ```
 
+## Postgres + pgvector (result cache, persistent search)
+
+1. **+ New** → **Template** → search **pgvector** → deploy the `pgvector` template
+   (`pgvector/pgvector` image on a persistent volume; it generates its own password).
+2. On the backend service → **Variables**, add the *private* URL so traffic stays on Railway's
+   internal network:
+
+   | Name | Value |
+   |---|---|
+   | `DATABASE_URL` | `${{pgvector.DATABASE_URL_PRIVATE}}` |
+
+3. On redeploy the backend creates the `vector` extension and its tables itself. `GET /health`
+   should show `"database": true`, and `GET /metrics` starts counting cache hits.
+
+The template also exposes a public TCP proxy for desktop SQL clients. If you don't need that,
+remove the TCP proxy in the pgvector service's **Settings → Networking**.
+
 ## Later: a separate worker service
 
 You can run the worker on its own (`arq jobs.worker.WorkerSettings`) to scale it independently of the
-API. **Don't do this yet:** the worker writes search vectors to ChromaDB on its own disk, and a
-separate Railway service has a separate disk, so `/search` on the API wouldn't see them. Roadmap #3
-moves vectors into Postgres/pgvector, which removes that coupling. After that, add a second service
-from the same repo with start command `arq jobs.worker.WorkerSettings` and set
+API. This needs Postgres configured: with `DATABASE_URL` set, vectors live in pgvector, so any
+process can write them and the API can read them. (Without it they go to a local ChromaDB
+directory that a separate service couldn't see.) Add a second service from the same repo with
+start command `arq jobs.worker.WorkerSettings`, give it the same variables, and set
 `RUN_WORKER_IN_PROCESS=false` on the API.

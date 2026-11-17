@@ -19,12 +19,15 @@ import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Sequence
+from typing import TYPE_CHECKING, Any, Dict, List, Sequence
 
 import chromadb
 from sentence_transformers import SentenceTransformer
 
 from models.schemas import TranscriptChunk
+
+if TYPE_CHECKING:  # pragma: no cover
+    from db.store import Store
 
 
 class SearchAgentError(Exception):
@@ -56,6 +59,7 @@ class SearchAgent:
         *,
         model_name: str = "all-MiniLM-L6-v2",
         persist_dir: str | Path | None = None,
+        store: "Store | None" = None,
     ) -> None:
         """
         Initialize embedding model and persistent Chroma client.
@@ -65,6 +69,13 @@ class SearchAgent:
             persist_dir: Persistent directory for ChromaDB.
         """
         self.model = SentenceTransformer(model_name)
+
+        # Step: With Postgres configured, vectors live in pgvector next to the transcript and
+        # survive redeploys. Without it, fall back to a local ChromaDB directory.
+        self.store = store
+        if store is not None:
+            self.client = None
+            return
 
         # Step: Allow deploy platforms (e.g. Railway) to mount a persistent volume and
         # configure Chroma's storage path via env var, while keeping a safe local default.
@@ -102,6 +113,9 @@ class SearchAgent:
             raise SearchAgentError("video_id is required for indexing.")
         if not chunks:
             raise SearchAgentError("No chunks provided for indexing.")
+
+        if self.store is not None:
+            return self._index_in_store(video_id.strip(), chunks)
 
         collection_name = self._sanitize_collection_name(video_id.strip())
 
@@ -156,6 +170,9 @@ class SearchAgent:
         if n_results <= 0:
             raise SearchAgentError("n_results must be >= 1.")
 
+        if self.store is not None:
+            return self._search_in_store(video_id.strip(), query.strip(), n_results)
+
         collection_name = self._sanitize_collection_name(video_id.strip())
 
         if not self._collection_exists(collection_name):
@@ -198,6 +215,37 @@ class SearchAgent:
             )
 
         return hits
+
+    # ---------- pgvector backend ----------
+
+    def _index_in_store(self, video_id: str, chunks: Sequence[TranscriptChunk]) -> bool:
+        assert self.store is not None
+        if self.store.has_embeddings(video_id):
+            return True  # embeddings never change for a given transcript: skip re-embedding
+        if self.store.get_transcript(video_id) is None:
+            self.store.save_transcript(video_id, "", chunks)
+        texts = [c.text for c in chunks]
+        embeddings = self.model.encode(texts, show_progress_bar=False, normalize_embeddings=True)
+        self.store.save_embeddings(video_id, [c.chunk_index for c in chunks], embeddings)
+        return True
+
+    def _search_in_store(self, video_id: str, query: str, n_results: int) -> List[SearchHit]:
+        assert self.store is not None
+        q = self.model.encode([query], show_progress_bar=False, normalize_embeddings=True)[0]
+        hits = self.store.search(video_id, q, n_results)
+        if not hits:
+            raise SearchAgentError(f"Video not processed yet: no embeddings for {video_id}.")
+        return [
+            SearchHit(
+                text=h.chunk.text,
+                start=float(h.chunk.start),
+                end=float(h.chunk.end),
+                chunk_index=int(h.chunk.chunk_index),
+                # Cosine distance → similarity, clamped to [0, 1].
+                relevance_score=max(0.0, min(1.0, 1.0 - h.distance)),
+            )
+            for h in hits
+        ]
 
     def _collection_exists(self, name: str) -> bool:
         """
