@@ -80,7 +80,6 @@ LECTURE TRANSCRIPTS:
 Rules:
 - objectives_analysis: one entry per learning objective above.
 - lectures_covering: lecture numbers (1-based, as in the "=== LECTURE N" headers); empty for missing objectives.
-- coverage_distribution must count the coverage_status values in objectives_analysis exactly.
 - evidence must cite specific timestamps and lecture numbers.
 - recommendations: exactly 5, ordered by priority (1 first)."""
 
