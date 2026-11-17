@@ -50,17 +50,17 @@ def _agent(fake):
     return agent
 
 
-def test_both_calls_share_a_cacheable_system_prompt():
+def test_summaries_call_is_tool_free_and_structured_call_caches_the_transcript():
     fake = FakeClaude()
     agent = _agent(fake)
-    warm = threading.Event()
     deltas = []
-    agent.stream_summaries(_chunks(), lambda s, t: deltas.append((s, t)), cache_warm=warm)
-    agent.generate_structured(_chunks(), cache_warm=warm)
+    agent.stream_summaries(_chunks(), lambda s, t: deltas.append((s, t)))
+    agent.generate_structured(_chunks())
     a, b = fake.calls
-    assert a["system"] == b["system"]
-    assert a["system"][-1]["cache_control"] == {"type": "ephemeral"}
+    # Production regression: a tools list (even with tool_choice none) made Claude drop the markers.
+    assert "tools" not in a and "tool_choice" not in a
     assert "text 0" in a["system"][-1]["text"]
+    assert b["system"][-1]["cache_control"] == {"type": "ephemeral"}  # read by the retry / fallback
     assert len(deltas) > 3  # streamed in pieces, not one blob
 
 

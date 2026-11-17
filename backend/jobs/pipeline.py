@@ -242,7 +242,9 @@ async def run_student(bus: JobEventBus, job_id: str, youtube_url: str) -> None:
 
         async def structured() -> StructuredContent:
             try:
-                result = await asyncio.to_thread(agent.generate_structured, chunks, stop.is_set, cache_warm)
+                # No cache_warm wait: the two calls no longer share a cache prefix, so the
+                # structured call starts at once instead of waiting for the summaries stream.
+                result = await asyncio.to_thread(agent.generate_structured, chunks, stop.is_set)
             except BaseException:
                 stop.set()
                 raise
