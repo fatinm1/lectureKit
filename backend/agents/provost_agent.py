@@ -7,6 +7,21 @@ from typing import Any
 
 import anthropic
 
+from agents.structured_call import StructuredOutputError, call_structured, make_tool
+from models.structured import CurriculumMap
+
+PROVOST_TOOL = make_tool(
+    "record_curriculum_map",
+    "Record how well the lectures cover the course's learning objectives.",
+    CurriculumMap,
+)
+
+PROVOST_SYSTEM = (
+    "You are an expert curriculum analyst helping a provost judge whether a course delivers on its "
+    "stated learning objectives. Be analytical and specific; this is for institutional decision-making. "
+    "Respond entirely in English regardless of the transcripts' language."
+)
+
 
 class ProvostAgentError(Exception):
     pass
@@ -22,22 +37,52 @@ class ProvostAgent:
         self.model = (os.getenv("ANTHROPIC_MODEL") or "claude-sonnet-4-6").strip()
 
     def generate_curriculum_map(self, lectures: list[dict[str, Any]], learning_objectives: str) -> dict:
+        """Forced `record_curriculum_map` tool call validated by CurriculumMap (see structured_call)."""
         combined_transcript = self._format_lectures(lectures)
-        prompt = self._build_prompt(combined_transcript, learning_objectives)
 
-        response = self.client.messages.create(
-            model=self.model,
-            max_tokens=8000,
-            messages=[{"role": "user", "content": prompt}],
-        )
+        def legacy() -> dict:
+            prompt = self._build_prompt(combined_transcript, learning_objectives)
+            response = self.client.messages.create(
+                model=self.model, max_tokens=8000, messages=[{"role": "user", "content": prompt}]
+            )
+            raw = "\n".join(
+                t for b in (getattr(response, "content", []) or []) if isinstance(t := getattr(b, "text", None), str)
+            )
+            return self._parse_json_response(raw.strip())
 
-        parts: list[str] = []
-        for block in getattr(response, "content", []) or []:
-            text = getattr(block, "text", None)
-            if isinstance(text, str):
-                parts.append(text)
-        raw = "\n".join(parts).strip()
-        return self._parse_json_response(raw)
+        try:
+            result = call_structured(
+                self.client,
+                agent="provost",
+                model=self.model,
+                system=PROVOST_SYSTEM,
+                user=self._build_tool_prompt(combined_transcript, learning_objectives),
+                tools=[PROVOST_TOOL],
+                tool_name=PROVOST_TOOL["name"],
+                model_cls=CurriculumMap,
+                max_tokens=8000,
+                context={"lecture_count": len(lectures)},
+                legacy_fallback=legacy,
+            )
+        except StructuredOutputError as exc:
+            raise ProvostAgentError(str(exc)) from exc
+        return result.value.model_dump()
+
+    def _build_tool_prompt(self, transcript: str, learning_objectives: str) -> str:
+        return f"""Compare these lectures against the learning objectives and call {PROVOST_TOOL["name"]}.
+
+LEARNING OBJECTIVES:
+{learning_objectives}
+
+LECTURE TRANSCRIPTS:
+{transcript}
+
+Rules:
+- objectives_analysis: one entry per learning objective above.
+- lectures_covering: lecture numbers (1-based, as in the "=== LECTURE N" headers); empty for missing objectives.
+- coverage_distribution must count the coverage_status values in objectives_analysis exactly.
+- evidence must cite specific timestamps and lecture numbers.
+- recommendations: exactly 5, ordered by priority (1 first)."""
 
     def _format_lectures(self, lectures: list[dict[str, Any]]) -> str:
         sections: list[str] = []

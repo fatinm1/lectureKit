@@ -58,6 +58,12 @@ _write_youtube_cookies()
 store = Store.from_env()
 cache = Cache.from_env(store)
 
+# Count which path each structured Claude output took (tool / tool_retry / legacy_fallback /
+# failed) in Redis, so /metrics can report the parse-failure rate.
+import agents.structured_call as _structured_call  # noqa: E402
+
+_structured_call.record_path = lambda agent, path: cache._incr(f"structured_{agent}_{path}")
+
 # Step: Agent 1 is stateless and safe to reuse.
 transcript_agent = TranscriptAgent()
 # Step: Agent 3 loads the embedding model once; vectors go to pgvector when `store` is set,
