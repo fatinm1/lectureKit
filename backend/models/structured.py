@@ -16,9 +16,10 @@ Validation context (passed to model_validate(context=...)):
 
 from __future__ import annotations
 
-from typing import Any, List, Literal
+from typing import Optional, Any, List, Literal
 
 from pydantic import BaseModel, Field, ValidationInfo, field_validator, model_validator
+from pydantic.json_schema import SkipJsonSchema
 
 from models.schemas import Flashcard, OutlineItem
 
@@ -178,22 +179,22 @@ class CurriculumMap(BaseModel):
     objectives_analysis: List[ObjectiveAnalysis] = Field(..., min_length=1)
     curriculum_strengths: List[str]
     critical_gaps: List[CriticalGap]
-    coverage_distribution: CoverageDistribution
+    # Derived, not generated: it's a pure count of objectives_analysis statuses, so the server
+    # computes it. (Asking Claude for it and cross-checking failed every production run: the
+    # model miscounts its own list.) Hidden from the tool schema; any value sent is overwritten.
+    coverage_distribution: SkipJsonSchema[Optional[CoverageDistribution]] = None
     recommendations: List[ProvostRecommendation] = Field(..., min_length=5, max_length=5)
 
     @model_validator(mode="after")
-    def _counts_match(self) -> "CurriculumMap":
+    def _derive_distribution(self) -> "CurriculumMap":
         by_status = {"covered": 0, "partial": 0, "missing": 0}
         for o in self.objectives_analysis:
             by_status[o.coverage_status] += 1
-        d = self.coverage_distribution
-        actual = (d.fully_covered, d.partially_covered, d.not_covered)
-        expected = (by_status["covered"], by_status["partial"], by_status["missing"])
-        if actual != expected:
-            raise ValueError(
-                f"coverage_distribution {actual} does not match objectives_analysis statuses {expected} "
-                "(fully_covered, partially_covered, not_covered)"
-            )
+        self.coverage_distribution = CoverageDistribution(
+            fully_covered=by_status["covered"],
+            partially_covered=by_status["partial"],
+            not_covered=by_status["missing"],
+        )
         return self
 
 

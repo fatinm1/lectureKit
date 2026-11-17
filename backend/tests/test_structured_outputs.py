@@ -96,10 +96,15 @@ def _curriculum(**overrides):
 
 def test_curriculum_counts_and_lecture_numbers_are_checked():
     CurriculumMap.model_validate(_curriculum(), context={"lecture_count": 2})
-    with pytest.raises(Exception, match="does not match"):
-        CurriculumMap.model_validate(
-            _curriculum(coverage_distribution={"fully_covered": 2, "partially_covered": 0, "not_covered": 0})
-        )
+    # A miscounted distribution is corrected, not rejected: the server derives it.
+    m = CurriculumMap.model_validate(
+        _curriculum(coverage_distribution={"fully_covered": 2, "partially_covered": 0, "not_covered": 0})
+    )
+    assert m.coverage_distribution.model_dump() == {"fully_covered": 1, "partially_covered": 0, "not_covered": 1}
+    no_dist = _curriculum()
+    del no_dist["coverage_distribution"]
+    assert CurriculumMap.model_validate(no_dist).coverage_distribution.not_covered == 1
+    assert "coverage_distribution" not in PROVOST_TOOL["input_schema"]["properties"]
     bad = _curriculum()
     bad["objectives_analysis"][0]["lectures_covering"] = [3]
     with pytest.raises(Exception, match="only lectures 1..2"):
