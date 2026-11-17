@@ -15,6 +15,7 @@ from typing import Optional
 from dotenv import load_dotenv
 
 from agents.content_agent import ContentAgent, ContentAgentError
+from agents.content_streaming import StreamingContentAgent
 from agents.faculty_agent import FacultyAgent, FacultyAgentError
 from agents.provost_agent import ProvostAgent, ProvostAgentError
 from agents.search_agent import SearchAgent, SearchAgentError
@@ -57,6 +58,7 @@ search_agent = SearchAgent()
 
 # Step: Lazy-init Claude-backed agents so Railway healthchecks pass before ANTHROPIC_API_KEY is set.
 _content_agent: Optional[ContentAgent] = None
+_streaming_content_agent: Optional[StreamingContentAgent] = None
 _translate_agent: Optional[TranslateAgent] = None
 _faculty_agent: Optional[FacultyAgent] = None
 _provost_agent: Optional[ProvostAgent] = None
@@ -67,6 +69,13 @@ def get_content_agent() -> ContentAgent:
     if _content_agent is None:
         _content_agent = ContentAgent()
     return _content_agent
+
+
+def get_streaming_content_agent() -> StreamingContentAgent:
+    global _streaming_content_agent
+    if _streaming_content_agent is None:
+        _streaming_content_agent = StreamingContentAgent()
+    return _streaming_content_agent
 
 
 def get_translate_agent() -> TranslateAgent:

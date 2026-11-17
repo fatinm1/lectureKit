@@ -69,7 +69,10 @@ A provost pastes multiple lecture URLs and their course learning objectives and 
 ### Agent 2 — Content Agent
 
 - Uses **Claude Sonnet** via Anthropic SDK
-- Generates outline + three summaries + 10 flashcards in a **single API call**
+- **Two parallel calls** (background jobs): the three summaries are **streamed** as plain text and shown as Claude writes them, while a second call returns the outline + 10 flashcards as JSON
+- **Prompt caching:** both calls share a system prompt holding the transcript (`cache_control: ephemeral`). The structured call starts once the streaming call has begun responding, so it reads the transcript from cache instead of paying for it twice. Token usage, including cache reads, is reported per call in each job's `done` event
+- **Stop button:** both calls stream, so pressing Stop closes them within about half a second, which stops generation and billing. Whatever was written so far is kept
+- The blocking `/process` fallback still uses a single call
 - 4-strategy JSON fallback parser handles markdown fences and preamble text
 - Explicit English output regardless of transcript language
 
@@ -78,7 +81,7 @@ A provost pastes multiple lecture URLs and their course learning objectives and 
 - Embeds transcript chunks **locally** using `sentence-transformers` `all-MiniLM-L6-v2`
 - Stores vectors in **ChromaDB** with cosine distance (one collection per video_id)
 - Skips reindexing if collection already exists
-- Under 0.02s search latency across 142-chunk corpora
+- Under 0.02s search latency
 
 ### Agent 4 — Translation Agent
 
@@ -108,7 +111,7 @@ A provost pastes multiple lecture URLs and their course learning objectives and 
 Processing a lecture takes over a minute, mostly waiting on Claude. Instead of holding one HTTP request open for that long:
 
 1. `POST /jobs` validates the URL, enqueues an **ARQ** job in **Redis**, and returns a `job_id` in milliseconds.
-2. The worker runs the agents and appends an event to a **Redis Stream** as each stage finishes: `transcript_fetched` → `chunks_indexed` → `outline_ready` → `summaries_ready` → `flashcards_ready` → `done` (or `failed`).
+2. The worker runs the agents and appends an event to a **Redis Stream** as each stage finishes: `transcript_fetched`, then concurrently `chunks_indexed`, `summary_delta` (summary text as Claude writes it, batched about every 100 ms) → `summaries_ready`, and `outline_ready` → `flashcards_ready`; finally `done`, `failed` or `cancelled`.
 3. `GET /jobs/{id}/events` streams those events to the browser as **Server-Sent Events**.
 4. Student mode opens `/study` as soon as the transcript is ready. The video player appears first, search becomes usable when indexing finishes (usually before Claude is done), and the outline, summaries and flashcards fill in as they arrive.
 
@@ -180,11 +183,17 @@ Agent 2 and Agent 3 run in parallel in Student mode. With background jobs, every
 
 ## Performance
 
+Measured in production on Nov 17, 2026, with three lectures (19 min, 50 min, 2.5 h):
+
 | Metric | Value |
 |--------|-------|
-| End-to-end processing | ~80 seconds |
+| Time to first content, blocking `/process` (before) | 69–77 s |
+| Time to first content, background jobs + SSE | **2.7–3.1 s** |
+| Search usable after submit | 4.2–6.4 s |
+| Full study kit (single Claude call) | 70–81 s |
+| `POST /jobs` server time | 14 ms |
 | Semantic search latency | <0.02 seconds |
-| Chunks from 2.5hr lecture | 142 |
+| Chunks from 2.5hr lecture | 50 |
 | Languages supported | 5 |
 | Flashcards per lecture | 10 |
 | Max Provost lectures | 10 |
@@ -265,6 +274,7 @@ npm run dev
 | GET | /health | Health check |
 | POST | /jobs | Enqueue a student / faculty / provost run; returns `job_id` immediately (202) |
 | GET | /jobs/{job_id} | Job status and final result |
+| POST | /jobs/{job_id}/cancel | Stop a running student job; keeps what was generated so far |
 | GET | /jobs/{job_id}/events | Server-Sent Events progress stream (replays from start or `Last-Event-ID`) |
 | POST | /process | Student mode, blocking (fallback when Redis isn't configured) |
 | POST | /search | Semantic search for a processed video |

@@ -25,7 +25,7 @@ from redis.asyncio import Redis
 
 JOB_TTL_SECONDS = 24 * 3600
 
-TERMINAL_EVENTS = frozenset({"done", "failed"})
+TERMINAL_EVENTS = frozenset({"done", "failed", "cancelled"})
 
 
 def _key(job_id: str) -> str:
@@ -38,6 +38,10 @@ def _events_key(job_id: str) -> str:
 
 def _result_key(job_id: str) -> str:
     return f"lk:job:{job_id}:result"
+
+
+def _cancel_key(job_id: str) -> str:
+    return f"lk:job:{job_id}:cancel"
 
 
 def _decode(v: Any) -> str:
@@ -94,6 +98,13 @@ class JobEventBus:
             pipe.hset(_key(job_id), "status", "running")
         results = await pipe.execute()
         return _decode(results[0])
+
+    async def request_cancel(self, job_id: str) -> None:
+        """Ask the worker to stop. The pipeline polls this flag and aborts its Claude streams."""
+        await self.redis.set(_cancel_key(job_id), "1", ex=JOB_TTL_SECONDS)
+
+    async def cancel_requested(self, job_id: str) -> bool:
+        return bool(await self.redis.exists(_cancel_key(job_id)))
 
     async def set_result(self, job_id: str, result: dict[str, Any]) -> None:
         await self.redis.set(_result_key(job_id), json.dumps(result, ensure_ascii=False), ex=JOB_TTL_SECONDS)
