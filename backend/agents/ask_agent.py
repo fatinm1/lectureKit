@@ -36,16 +36,20 @@ MAX_ANSWER_TOKENS = 700
 _CITATION = re.compile(r"\[(\d{1,2})(?:\s*,\s*(\d{1,2}))*\]")
 _NUMBERS = re.compile(r"\d{1,2}")
 
+# The model is never told it has "excerpts", "passages" or "sources": a name it's given is a name
+# it repeats ("the excerpts don't cover…"), and telling it not to say the word didn't stop that
+# (caught by the evals). It's told it has the lecture itself, in numbered parts.
 ASK_SYSTEM = (
-    "You answer a student's questions about one university lecture, using only the numbered "
-    "transcript excerpts you are given. Rules:\n"
-    "- Cite every claim with the excerpt number(s) in square brackets right after it, e.g. "
+    "You answer a student's questions about one university lecture. You're given what the "
+    "lecturer said, split into numbered parts with their time ranges. Rules:\n"
+    "- After every claim, put the number of the part it comes from in square brackets, e.g. "
     "\"Gradient descent follows the negative gradient [2].\" Use [1][3] or [1, 3] for several.\n"
-    "- Use only the excerpts. If they don't contain the answer, say plainly that the lecture "
-    "doesn't cover it (no citation), and mention what it does cover if useful. Do not fill gaps "
-    "from general knowledge.\n"
-    "- Talk about \"the lecture\" or \"the lecturer\", never \"the excerpts\": the student "
-    "doesn't see them.\n"
+    "- Answer only from what the lecturer said. If the lecture doesn't answer the question, say "
+    "plainly that the lecture doesn't cover it, and mention what it does cover if useful. Never "
+    "fill gaps from general knowledge.\n"
+    "- The student only sees the lecture, not the numbered parts. Refer to \"the lecture\" or "
+    "\"the lecturer\"; never mention parts, excerpts, passages, sources, the transcript or what "
+    "you were given.\n"
     "- Be concise: 2-6 sentences unless the student asks for more. Plain prose, no headings.\n"
     "- Respond in English."
 )
@@ -111,7 +115,7 @@ class AskAgent:
     @staticmethod
     def _user_message(question: str, sources: Sequence[Source]) -> str:
         blocks = "\n\n".join(f"[{s.n}] ({_fmt(s.start)}–{_fmt(s.end)})\n{s.text}" for s in sources)
-        return f"Lecture excerpts:\n\n{blocks}\n\nStudent's question: {question}"
+        return f"The lecture, in numbered parts:\n\n{blocks}\n\nStudent's question: {question}"
 
     def _messages(self, question: str, sources: Sequence[Source], history: Sequence[dict]) -> list:
         """

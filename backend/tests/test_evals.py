@@ -181,3 +181,26 @@ def _forward(client: TestClient, req: httpx.Request) -> httpx.Response:
 def test_unknown_suite_is_rejected():
     with pytest.raises(SystemExit):
         run.main(["--suites", "vibes"])
+
+
+@pytest.mark.parametrize(
+    "answer,leaks",
+    [
+        ("These topics aren't addressed in the excerpts.", True),  # seen in production, run 2
+        ("The excerpts focus on foundational concepts.", True),
+        ("Based on the provided context, a bias shifts the threshold.", True),
+        ("The transcript doesn't mention quicksort.", True),
+        ("The lecture doesn't cover quicksort. It focuses on problem definitions [1].", False),
+        ("The lecturer explains that a bias shifts the threshold [2].", False),
+    ],
+)
+def test_internal_wording_detection(answer, leaks):
+    assert metrics.leaks_internal_wording(answer) is leaks
+
+
+def test_ask_summary_reports_wording_leaks():
+    rows = [
+        {"answerable": False, "score": metrics.score_ask({"answerable": False}, [], {"answer": "The excerpts don't cover it.", "citations": []})},
+        {"answerable": False, "score": metrics.score_ask({"answerable": False}, [], {"answer": "The lecture doesn't cover it.", "citations": []})},
+    ]
+    assert metrics.ask_summary(rows)["leaks_internal_wording"] == 0.5
