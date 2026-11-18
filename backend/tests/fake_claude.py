@@ -33,6 +33,10 @@ STRUCTURED = {
 }
 
 
+# Cites a real source, two at once, and one that doesn't exist ([9]).
+ASK_TEXT = "Gradient descent follows the negative gradient [1]. Backpropagation applies the chain rule [2, 3] layer by layer [9]."
+
+
 def _pieces(text: str, size: int):
     return [text[i : i + size] for i in range(0, len(text), size)]
 
@@ -108,7 +112,10 @@ class FakeClaude:
         tool_inputs=None,
         legacy_text=None,
         notes_inputs=None,
+        ask_text=None,
     ):
+        # "Ask the lecture" answers (user message contains "Student's question:").
+        self.ask_text = ask_text if ask_text is not None else ASK_TEXT
         # Section-notes calls (map step) are answered from `notes_inputs` if given, else
         # generated from the prompt so they always validate.
         self.notes_inputs = list(notes_inputs) if notes_inputs is not None else None
@@ -135,6 +142,8 @@ class FakeClaude:
             kind = "structured"
         elif "@@SUMMARY_90S@@" in user:
             kind = "summaries"
+        elif any("Student's question:" in str(m.get("content")) for m in kwargs["messages"]):
+            kind = "ask"
         else:
             kind = "legacy"
         usage = {
@@ -146,6 +155,8 @@ class FakeClaude:
         }
         if kind == "summaries":
             return _Stream(self, kind, _pieces(SUMMARY_TEXT, self.piece_size), self.summary_delay, usage)
+        if kind == "ask":
+            return _Stream(self, kind, _pieces(self.ask_text, self.piece_size), self.summary_delay, usage)
         if kind == "legacy":
             return _Stream(self, kind, _pieces(self.legacy_text, 40), self.structured_delay, usage)
         name = kwargs["tool_choice"]["name"]

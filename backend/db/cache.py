@@ -30,6 +30,7 @@ logger = logging.getLogger("lecturekit.cache")
 
 RESULT_TTL_S = 3600
 SEARCH_TTL_S = 600
+ANSWER_TTL_S = 7 * 24 * 3600  # a lecture's transcript never changes, so answers stay valid
 _PREFIX = "lk:cache"
 _METRICS = "lk:metrics"
 _USAGE_FIELDS = ("input_tokens", "output_tokens", "cache_creation_input_tokens", "cache_read_input_tokens")
@@ -152,6 +153,25 @@ class Cache:
 
     def save_search(self, video_id: str, query: str, n: int, results: list[dict[str, Any]]) -> None:
         self._rset(self._search_key(video_id, query, n), results, SEARCH_TTL_S)
+
+    # ---------- ask the lecture ----------
+
+    def get_answer(self, key: str) -> Optional[dict[str, Any]]:
+        digest = hashlib.sha1(key.encode("utf-8")).hexdigest()[:20]
+        hit = self._rget(f"{_PREFIX}:ask:{digest}")
+        self._incr("ask_cache_hits" if hit is not None else "ask_cache_misses")
+        return hit
+
+    def save_answer(self, key: str, answer: dict[str, Any]) -> None:
+        digest = hashlib.sha1(key.encode("utf-8")).hexdigest()[:20]
+        self._rset(f"{_PREFIX}:ask:{digest}", answer, ANSWER_TTL_S)
+
+    def record_ask(self, usage: Optional[dict[str, Any]], *, grounded: bool) -> None:
+        self._incr("ask_answers")
+        if not grounded:
+            self._incr("ask_ungrounded")
+        for field, n in sum_usage(usage).items():
+            self._incr(f"spent_{field}", n)
 
     # ---------- metrics ----------
 
