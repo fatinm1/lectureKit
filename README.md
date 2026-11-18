@@ -161,6 +161,16 @@ Follow-ups work: the last 3 turns go back as plain Q/A, but their excerpts aren'
 
 ---
 
+## Accounts, library and sharing
+
+- **Email + password accounts.** Passwords are hashed with argon2id. Logins take the same time whether or not the email exists, and login/signup are limited to 10 tries per IP per hour. Changing your password signs you out everywhere else; deleting your account removes your library and every share link.
+- **Sessions** are 30-day bearer tokens. The browser keeps the token; the database keeps only its SHA-256, so a database leak doesn't hand out live sessions. A header instead of a cookie because the frontend (Vercel) and API (Railway) are on different sites, where browsers increasingly block third-party cookies.
+- **Library.** Every run finished while signed in is saved automatically: study kits, faculty audits and curriculum maps, each as a snapshot so it never changes when prompts or caches move on. Runs finished *before* signing in are remembered for a day and saved when you sign in. Open, rename, filter and delete from `/library`.
+- **Read-only share links.** Share turns on an unguessable link (`/s/<token>`) that opens the item for anyone, signed in or not, with a "shared with you" banner and nothing about the owner. Stop sharing kills the link at once; sharing again makes a new one. Shared pages are `noindex`.
+- **Not yet:** password reset by email (needs an email provider).
+
+---
+
 ## Production basics
 
 - **Spend accounting.** Every Claude call reports its token usage to one place (`usage.py`). That includes retries, rejected tool calls, fallbacks, chat, translation and the map step, since all of them are billed. Usage is counted lifetime, per agent and per UTC day. `/metrics` shows estimated dollars in total, by agent and for today.
@@ -338,7 +348,7 @@ npm run dev
 | ANTHROPIC_MAP_MODEL | Model for the map step (default: `ANTHROPIC_MODEL`) |
 | ANTHROPIC_ASK_MODEL | Model for "Ask the lecture" (default: `ANTHROPIC_MODEL`) |
 | DAILY_BUDGET_USD | Stop new AI work once today's estimated spend reaches this (unset = off) |
-| RATE_LIMIT_PER_HOUR / ASK_RATE_LIMIT_PER_HOUR | Per-IP hourly limits for runs / chat questions (defaults 20 / 60; 0 = off) |
+| RATE_LIMIT_PER_HOUR / ASK_RATE_LIMIT_PER_HOUR / AUTH_RATE_LIMIT_PER_HOUR | Per-IP hourly limits for runs / chat questions / sign-in attempts (defaults 20 / 60 / 10; 0 = off) |
 | SENTRY_DSN | Error tracking (unset = off) |
 | LOG_FORMAT / LOG_LEVEL | `json` (default) or `text`; log level (default `INFO`) |
 | PRICE_*_PER_MTOK | Token prices for the dollar estimates (default: Sonnet list prices) |
@@ -365,6 +375,13 @@ npm run dev
 | POST | /process | Student mode, blocking (fallback when Redis isn't configured) |
 | POST | /search | Semantic search for a processed video |
 | POST | /ask | "Ask the lecture": grounded answer with `[n]` citations, streamed as SSE |
+| POST | /auth/signup, /auth/login, /auth/logout | Email + password sessions (bearer token) |
+| GET | /auth/me | The signed-in user |
+| POST / DELETE | /auth/password, /auth/account | Change password (ends other sessions) / delete account and library |
+| GET / POST | /library | List the library / save a finished job (`{job_id}`) |
+| GET / PATCH / DELETE | /library/{id} | Open / rename / delete an item |
+| POST / DELETE | /library/{id}/share | Turn a read-only share link on / off |
+| GET | /shared/{token} | A shared item (no sign-in needed) |
 | POST | /translate | Translate study materials to a target language |
 | POST | /faculty | Faculty audit report |
 | POST | /provost | Provost curriculum map (multiple URLs) |

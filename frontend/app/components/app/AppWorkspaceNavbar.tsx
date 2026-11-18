@@ -4,6 +4,8 @@
 
 import Link from "next/link";
 
+import { AccountNav } from "./AccountNav";
+
 export function AppWorkspaceNavbar(): JSX.Element {
   return (
     <nav className="fixed top-0 z-50 w-full border-b border-white/5 bg-zinc-950/80 backdrop-blur-md">
@@ -11,7 +13,7 @@ export function AppWorkspaceNavbar(): JSX.Element {
         <Link href="/" className="font-lk-serif text-xl tracking-tight text-white">
           LectureKit
         </Link>
-        <span className="text-xs font-medium uppercase tracking-widest text-zinc-500">App</span>
+        <AccountNav />
       </div>
     </nav>
   );

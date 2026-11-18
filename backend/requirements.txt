@@ -18,3 +18,4 @@ psycopg[binary]>=3.2,<4
 psycopg-pool>=3.2,<4
 pgvector>=0.3,<1
 sentry-sdk[fastapi]>=2.0,<3
+argon2-cffi>=23.1,<26

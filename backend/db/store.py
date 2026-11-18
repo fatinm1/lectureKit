@@ -88,6 +88,40 @@ CREATE TABLE IF NOT EXISTS jobs (
     created_at  timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS jobs_created_at_idx ON jobs (created_at DESC);
+
+-- Accounts (db/accounts.py). Passwords are argon2id hashes; sessions store only a SHA-256 of
+-- the bearer token, so a database leak doesn't hand out live sessions.
+CREATE TABLE IF NOT EXISTS users (
+    id             text PRIMARY KEY,
+    email          text NOT NULL UNIQUE,
+    password_hash  text NOT NULL,
+    created_at     timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS sessions (
+    token_hash  text PRIMARY KEY,
+    user_id     text NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at  timestamptz NOT NULL DEFAULT now(),
+    expires_at  timestamptz NOT NULL
+);
+CREATE INDEX IF NOT EXISTS sessions_user_idx ON sessions (user_id);
+
+-- A snapshot of each saved result, so a library item never changes or disappears when the
+-- result cache moves to a new prompt version. share_token is null unless the owner shared it.
+CREATE TABLE IF NOT EXISTS library_items (
+    id           text PRIMARY KEY,
+    user_id      text NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    job_id       text,
+    kind         text NOT NULL,
+    video_id     text,
+    title        text NOT NULL,
+    payload      jsonb NOT NULL,
+    share_token  text UNIQUE,
+    shared_at    timestamptz,
+    created_at   timestamptz NOT NULL DEFAULT now(),
+    UNIQUE (user_id, job_id)
+);
+CREATE INDEX IF NOT EXISTS library_user_created_idx ON library_items (user_id, created_at DESC);
 """
 
 
