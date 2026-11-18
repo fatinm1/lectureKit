@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import usage
 import json
 import hashlib
 import inspect
@@ -64,6 +65,7 @@ class FacultyAgent:
             response = self.client.messages.create(
                 model=self.model, max_tokens=8000, messages=[{"role": "user", "content": prompt}]
             )
+            usage.report("faculty", response)
             raw = "\n".join(
                 t for b in (getattr(response, "content", []) or []) if isinstance(t := getattr(b, "text", None), str)
             )

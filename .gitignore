@@ -22,3 +22,6 @@ frontend/out/
 .DS_Store
 .idea/
 .vscode/
+
+# Local Redis snapshots (test runs)
+dump.rdb

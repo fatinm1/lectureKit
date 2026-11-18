@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import time
 import logging
 import os
 from typing import Any, Optional
@@ -46,6 +47,32 @@ def sum_usage(usage: Optional[dict[str, Any]]) -> dict[str, int]:
         for f in _USAGE_FIELDS:
             totals[f] += int(call.get(f) or 0)
     return totals
+
+
+def prices() -> dict[str, float]:
+    """USD per million tokens. Defaults are Claude Sonnet list prices; override per deployment."""
+
+    def price(name: str, default: float) -> float:
+        try:
+            return float(os.getenv(name, "") or default)
+        except ValueError:
+            return default
+
+    return {
+        "input_tokens": price("PRICE_INPUT_PER_MTOK", 3.0),
+        "output_tokens": price("PRICE_OUTPUT_PER_MTOK", 15.0),
+        "cache_creation_input_tokens": price("PRICE_CACHE_WRITE_PER_MTOK", 3.75),
+        "cache_read_input_tokens": price("PRICE_CACHE_READ_PER_MTOK", 0.30),
+    }
+
+
+def usd(counts: dict[str, int], prefix: str = "") -> float:
+    """Estimated dollars for token counts keyed `<prefix><field>` (e.g. "spent_input_tokens")."""
+    return round(sum(int(counts.get(f"{prefix}{k}", 0) or 0) * p / 1e6 for k, p in prices().items()), 4)
+
+
+def _today() -> str:
+    return time.strftime("%Y-%m-%d", time.gmtime())
 
 
 class Cache:
@@ -135,9 +162,6 @@ class Cache:
             {"payload": payload, "usage": usage},
             RESULT_TTL_S,
         )
-        for field, n in sum_usage(usage).items():
-            self._incr(f"spent_{field}", n)
-
     # ---------- search ----------
 
     @staticmethod
@@ -166,12 +190,38 @@ class Cache:
         digest = hashlib.sha1(key.encode("utf-8")).hexdigest()[:20]
         self._rset(f"{_PREFIX}:ask:{digest}", answer, ANSWER_TTL_S)
 
-    def record_ask(self, usage: Optional[dict[str, Any]], *, grounded: bool) -> None:
+    def record_ask(self, *, grounded: bool) -> None:
         self._incr("ask_answers")
         if not grounded:
             self._incr("ask_ungrounded")
-        for field, n in sum_usage(usage).items():
-            self._incr(f"spent_{field}", n)
+
+    # ---------- spend (fed by usage.report from every Claude call) ----------
+
+    def record_spend(self, agent: str, counts: dict[str, int]) -> None:
+        """Lifetime, per-agent and per-UTC-day token counters, in one round trip."""
+        if self.redis is None:
+            return
+        day_key = f"{_PREFIX}:spend:{_today()}"
+        try:
+            pipe = self.redis.pipeline()
+            for field, n in counts.items():
+                if n:
+                    pipe.hincrby(_METRICS, f"spent_{field}", n)
+                    pipe.hincrby(_METRICS, f"agent_{agent}_{field}", n)
+                    pipe.hincrby(day_key, field, n)
+            pipe.expire(day_key, 3 * 24 * 3600)
+            pipe.execute()
+        except redis.RedisError:
+            pass
+
+    def spent_today_usd(self) -> float:
+        if self.redis is None:
+            return 0.0
+        try:
+            raw = self.redis.hgetall(f"{_PREFIX}:spend:{_today()}")
+        except redis.RedisError:
+            return 0.0
+        return usd({(k.decode() if isinstance(k, bytes) else k): int(v) for k, v in raw.items()})
 
     # ---------- metrics ----------
 

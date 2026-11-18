@@ -209,7 +209,8 @@ def test_student_long_lecture_maps_then_reduces(long_lecture):
     assert types.index("transcript_fetched") < types.index("mapping") < types.index("notes_ready")
     assert types.index("notes_ready") < types.index("summary_delta")
     mapped = [e.data for e in events if e.type == "section_mapped"]
-    assert mapped[-1] == {"done": 6, "total": 6, "t": mapped[-1]["t"]}
+    assert [m["done"] for m in mapped] == [1, 2, 3, 4, 5, 6]  # in order, none after notes_ready
+    assert types.index("notes_ready") > max(i for i, t in enumerate(types) if t == "section_mapped")
     done = events[-1]
     assert done.type == "done"
     assert done.data["timings"]["map"]["sections"] == 6

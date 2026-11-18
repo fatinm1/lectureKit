@@ -116,7 +116,10 @@ export async function createJob(body: CreateJobBody): Promise<string | null> {
   } catch {
     return null;
   }
-  if (response.status === 503 || response.status === 404 || response.status === 405) {
+  // A 503 *with* Retry-After is the daily budget guard, not "jobs unavailable": show its
+  // message instead of falling back to the blocking endpoint (which the guard blocks too).
+  const guarded = response.status === 429 || (response.status === 503 && response.headers.has("retry-after"));
+  if (!guarded && (response.status === 503 || response.status === 404 || response.status === 405)) {
     return null;
   }
   const payload = (await response.json().catch(() => null)) as { job_id?: string; detail?: unknown } | null;

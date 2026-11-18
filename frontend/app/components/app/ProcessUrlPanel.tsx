@@ -17,6 +17,7 @@ import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 
 import type { FacultySession, LectureSession, ProvostSession } from "../../../types/lecture";
 import { createJob, JobRequestError, subscribeToJob, type CreateJobBody, type JobSubscription } from "../../../utils/jobs";
+import { track } from "../../../utils/analytics";
 
 const FEATURES = ["Instant Summaries", "Smart Flashcards", "Semantic Search"] as const;
 
@@ -296,6 +297,7 @@ export function ProcessUrlPanel(): JSX.Element {
             return;
           }
           case "failed":
+            track("job_failed", { mode: jobMode, status: event.data.status, stage: event.data.stage });
             resetToForm(event.data.message || "Processing failed. Please try a different URL.");
             return;
           default:
@@ -360,11 +362,16 @@ export function ProcessUrlPanel(): JSX.Element {
       try {
         const jobId = await createJob(jobBody);
         if (jobId) {
+          track("job_started", { mode });
           followJob(jobId, mode);
           return;
         }
       } catch (err) {
         if (err instanceof JobRequestError) {
+          track(err.status === 429 || err.status === 503 ? "rate_limited" : "job_failed", {
+            mode,
+            status: err.status,
+          });
           resetToForm(err.message);
           return;
         }

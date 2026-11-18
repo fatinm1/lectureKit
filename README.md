@@ -161,6 +161,20 @@ Follow-ups work: the last 3 turns go back as plain Q/A, but their excerpts aren'
 
 ---
 
+## Production basics
+
+- **Spend accounting.** Every Claude call reports its token usage to one place (`usage.py`). That includes retries, rejected tool calls, fallbacks, chat, translation and the map step, since all of them are billed. Usage is counted lifetime, per agent and per UTC day. `/metrics` shows estimated dollars in total, by agent and for today.
+- **Daily budget.** With `DAILY_BUDGET_USD` set, new AI requests get a 503 (with `Retry-After`) once today's estimate reaches it. Reads, search and cached lectures already open keep working.
+- **Per-IP rate limits.** A fixed one-hour window in Redis, so it holds across restarts: 20 runs and 60 chat questions per visitor per hour by default. The client IP comes from Railway's `X-Real-IP`, not `X-Forwarded-For`, which anyone can forge to get a fresh bucket. Limited responses are 429s with `Retry-After` and a plain-English message, and they still carry CORS headers so the browser can show it.
+- **Structured logs and request IDs.** JSON logs, one line per event, plus one line per request (method, path, status, duration, client IP). Each request gets an ID, either the caller's `X-Request-ID` or Railway's, that's on every log line and echoed in the response.
+- **Sentry (opt-in).** On only when `SENTRY_DSN` is set, and never sends request bodies or cookies.
+- **PostHog (opt-in).** On only when `NEXT_PUBLIC_POSTHOG_KEY` is set. It's loaded on demand with autocapture and session recording off, and events carry mode, timings and outcomes only: no URLs, lecture content or questions.
+- **Tests.** About 140 offline tests (fake Claude, real Redis and Postgres in CI) cover the pipeline, caching, structured outputs, map-reduce, chat, limits and logging. The streaming UI is checked with Playwright scripts against a local fake backend.
+
+Setup steps are in [docs/deploy-railway.md](docs/deploy-railway.md#protecting-your-anthropic-balance-recommended).
+
+---
+
 ## Long lectures (map-reduce)
 
 Each mode can only read so much in one prompt, and long lectures used to be cut silently. Faculty read the first 6,000 words (about 40 minutes). Provost read the first 4,000 words of each lecture. Student sent everything in one prompt, however long.
@@ -323,12 +337,18 @@ npm run dev
 | MAP_CONCURRENCY | Sections mapped in parallel (default `4`) |
 | ANTHROPIC_MAP_MODEL | Model for the map step (default: `ANTHROPIC_MODEL`) |
 | ANTHROPIC_ASK_MODEL | Model for "Ask the lecture" (default: `ANTHROPIC_MODEL`) |
+| DAILY_BUDGET_USD | Stop new AI work once today's estimated spend reaches this (unset = off) |
+| RATE_LIMIT_PER_HOUR / ASK_RATE_LIMIT_PER_HOUR | Per-IP hourly limits for runs / chat questions (defaults 20 / 60; 0 = off) |
+| SENTRY_DSN | Error tracking (unset = off) |
+| LOG_FORMAT / LOG_LEVEL | `json` (default) or `text`; log level (default `INFO`) |
+| PRICE_*_PER_MTOK | Token prices for the dollar estimates (default: Sonnet list prices) |
 
 ### Frontend (`frontend/.env.local`)
 
 | Variable | Description |
 |----------|-------------|
 | NEXT_PUBLIC_API_URL | Backend URL (default: http://localhost:8000) |
+| NEXT_PUBLIC_POSTHOG_KEY / NEXT_PUBLIC_POSTHOG_HOST | Optional PostHog analytics (unset = not loaded) |
 
 ---
 

@@ -13,6 +13,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { AskError, askLecture, splitCitations, type AskSource, type AskTurn } from "../../../utils/ask";
+import { track } from "../../../utils/analytics";
 import { formatTimestamp } from "../../../utils/format";
 
 type Message = {
@@ -102,6 +103,8 @@ export function AskPanel({
     const controller = new AbortController();
     abortRef.current = controller;
     let answer = "";
+    const t0 = performance.now();
+    track("ask_asked", { follow_up: history.length > 0 });
     try {
       const done = await askLecture(
         { youtube_url: youtubeUrl, question, history },
@@ -114,6 +117,12 @@ export function AskPanel({
         },
         controller.signal
       );
+      track("ask_answered", {
+        grounded: done.grounded,
+        cached: done.cached,
+        citations: done.citations.length,
+        seconds: Math.round((performance.now() - t0) / 100) / 10,
+      });
       update(index, {
         answer: done.answer,
         citations: done.citations,
@@ -125,6 +134,9 @@ export function AskPanel({
       if (controller.signal.aborted) {
         update(index, { status: "stopped" });
       } else {
+        if (err instanceof AskError && (err.status === 429 || err.status === 503)) {
+          track("rate_limited", { mode: "ask", status: err.status });
+        }
         update(index, {
           status: "error",
           error: err instanceof AskError ? err.message : "Could not reach the server. Please try again.",

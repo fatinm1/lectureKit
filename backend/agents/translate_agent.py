@@ -14,6 +14,7 @@ frontend language selector -> POST /translate -> TranslateAgent -> translated JS
 
 from __future__ import annotations
 
+import usage
 import json
 import os
 import re
@@ -157,6 +158,7 @@ class TranslateAgent:
                 )
             else:
                 raise TranslateAgentError(f"Claude API call failed: {type(exc).__name__}") from exc
+        usage.report("translate", response)
 
         parts: list[str] = []
         for block in getattr(response, "content", []) or []:

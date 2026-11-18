@@ -24,6 +24,7 @@ Purpose: Get a validated, typed object out of Claude with a forced tool call.
 
 from __future__ import annotations
 
+import usage as usage_mod
 import logging
 import time
 from dataclasses import dataclass, field
@@ -150,6 +151,7 @@ def call_structured(
         except Exception as exc:
             raise StructuredOutputError(f"Claude call failed: {type(exc).__name__}: {exc}") from exc
         _add_usage(usage, message, seconds, first)
+        usage_mod.report(agent, message)  # every attempt is billed, valid or not
 
         block = _tool_use_block(message, tool_name)
         if block is None:
