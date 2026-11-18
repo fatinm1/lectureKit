@@ -142,7 +142,9 @@ def test_cache_reads_through_redis_then_postgres(store, cache):
 
     c = cache.counters()
     assert c["result_misses"] == 1 and c["result_redis_hits"] == 1 and c["result_db_hits"] == 1
-    assert c["saved_output_tokens"] == 2 * 75 and c["spent_input_tokens"] == 100
+    assert c["saved_output_tokens"] == 2 * 75
+    # Saving a result doesn't count spend: each Claude call reports its own usage (usage.py).
+    assert "spent_input_tokens" not in c
 
 
 def test_search_cache_normalizes_queries(cache):

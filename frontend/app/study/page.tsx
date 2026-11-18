@@ -20,6 +20,7 @@ import { AskPanel } from "../components/app/AskPanel";
 import { MarketingScrollReveal } from "../components/marketing/MarketingScrollReveal";
 
 import type { LectureSession } from "../../types/lecture";
+import { track } from "../../utils/analytics";
 import { formatTimestamp } from "../../utils/format";
 import { cancelJob, fetchJob, subscribeToJob, type StudentResult, type SummarySection } from "../../utils/jobs";
 
@@ -275,6 +276,12 @@ export default function StudyPage(): JSX.Element {
               setMapProgress(null);
               const timings = event.data.timings ?? {};
               if (typeof timings.total_s === "number") setReadyIn(timings.total_s);
+              track("study_ready", {
+                seconds: typeof timings.total_s === "number" ? timings.total_s : null,
+                first_summary_s: typeof timings.first_summary_token_s === "number" ? timings.first_summary_token_s : null,
+                cached: Boolean(timings.cache_hit),
+                long_lecture: "map" in timings,
+              });
               setFromCache(Boolean(timings.cache_hit));
               console.log("[LectureKit] job timings (s)", { ...timings, first_content_s: timings.transcript_s });
               finish(sessionFromResult(event.data.result as StudentResult));
@@ -687,6 +694,7 @@ export default function StudyPage(): JSX.Element {
                   const id = jobIdRef.current;
                   if (!id) return;
                   setStopping(true);
+                  track("stop_clicked");
                   void cancelJob(id).then((ok) => {
                     if (!ok) setStopping(false);
                   });

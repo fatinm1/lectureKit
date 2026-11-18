@@ -118,14 +118,25 @@ async def _llm_chunks(
         job_id, "mapping", {"sections": total, "words": map_reduce.word_count(chunks), **extra}
     )
     loop = asyncio.get_running_loop()
+    # Progress comes from the map threads. One consumer emits it in order: scheduling each emit
+    # separately let them interleave on Redis, so "5 of 6" could land after "6 of 6", or after
+    # notes_ready.
+    progress_q: asyncio.Queue = asyncio.Queue()
 
     def progress(done: int, of: int) -> None:  # called from the map threads
-        asyncio.run_coroutine_threadsafe(
-            bus.emit(job_id, "section_mapped", {"done": done, "total": of, **extra}), loop
-        )
+        loop.call_soon_threadsafe(progress_q.put_nowait, (done, of))
 
+    async def emit_progress() -> None:
+        while (item := await progress_q.get()) is not None:
+            await bus.emit(job_id, "section_mapped", {"done": item[0], "total": item[1], **extra})
+
+    emitter = asyncio.create_task(emit_progress())
     should_stop = stop.is_set if stop is not None else (lambda: False)
-    notes = await asyncio.to_thread(agent.notes_for, chunks, should_stop, progress)
+    try:
+        notes = await asyncio.to_thread(agent.notes_for, chunks, should_stop, progress)
+    finally:
+        progress_q.put_nowait(None)  # queued after every progress item, so they all go out first
+        await emitter
     await _safe(services.cache.save_result, video_id, "notes", "en", version, notes.payload(), notes.usage)
     await bus.emit(job_id, "notes_ready", {"sections": len(notes.sections), "cached": False, **extra})
     return map_reduce.digest_chunks(notes, chunks), {

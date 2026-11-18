@@ -58,6 +58,12 @@ _write_youtube_cookies()
 store = Store.from_env()
 cache = Cache.from_env(store)
 
+# Every Claude call reports its token usage here (see usage.py): lifetime, per-agent and
+# per-day spend, which /metrics and the daily budget guard read.
+import usage as _usage  # noqa: E402
+
+_usage.set_sink(cache.record_spend)
+
 # Count which path each structured Claude output took (tool / tool_retry / legacy_fallback /
 # failed) in Redis, so /metrics can report the parse-failure rate.
 import agents.structured_call as _structured_call  # noqa: E402

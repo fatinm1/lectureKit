@@ -27,6 +27,8 @@ from urllib.parse import urlparse
 
 import services
 from budget import AIBudgetMiddleware
+from limits import GuardMiddleware
+from observability import RequestContextMiddleware, setup_logging, setup_sentry
 from fastapi import FastAPI, HTTPException
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
@@ -57,6 +59,8 @@ from services import (
 )
 from utils.youtube import InvalidYouTubeUrlError, extract_youtube_video_id
 
+setup_logging()
+SENTRY_ENABLED = setup_sentry()
 logger = logging.getLogger("lecturekit")
 
 
@@ -71,6 +75,16 @@ app = FastAPI(
 app.add_middleware(
     AIBudgetMiddleware, paths=["/process", "/faculty", "/provost", "/translate", "/jobs", "/ask"]
 )
+
+# Per-IP hourly limits and the daily spend cap (limits.py), then request IDs + one JSON log line
+# per request (observability.py). Middleware added later wraps earlier ones, so CORS (added
+# below) stays outermost and even 429/503 responses carry CORS headers.
+app.add_middleware(
+    GuardMiddleware,
+    redis_client=lambda: services.cache.redis,
+    spent_today=lambda: services.cache.spent_today_usd(),
+)
+app.add_middleware(RequestContextMiddleware)
 
 # Step: Return a concise, user-friendly 422 instead of a large Pydantic error tree.
 @app.exception_handler(RequestValidationError)
@@ -108,7 +122,7 @@ for dev in dev_origins:
     if dev not in allowed_origins:
         allowed_origins.append(dev)
 
-print(f"CORS allowed origins: {allowed_origins}")
+logger.info("CORS allowed origins: %s", allowed_origins)
 
 app.add_middleware(
     CORSMiddleware,
@@ -141,6 +155,8 @@ def health_check() -> dict[str, str | bool]:
         "anthropic_configured": key_ok,
         "database": services.store is not None,
         "cache": services.cache.redis is not None,
+        "sentry": SENTRY_ENABLED,
+        "version": (os.getenv("RAILWAY_GIT_COMMIT_SHA") or "dev")[:7],
     }
 
 
@@ -430,7 +446,7 @@ def ask_lecture(payload: AskRequest) -> StreamingResponse:
         finally:
             it.close()  # client disconnected → stop Claude too
         done = {"answer": result.answer, "citations": result.citations, "grounded": result.grounded}
-        services.cache.record_ask(result.usage, grounded=result.grounded)
+        services.cache.record_ask(grounded=result.grounded)
         if cache_key:
             services.cache.save_answer(cache_key, done)
         yield sse("done", {**done, "cached": False})
@@ -456,21 +472,15 @@ def metrics() -> dict:
     counters = services.cache.counters()
     jobs = services.store.job_metrics() if services.store is not None else None
 
-    def price(name: str, default: float) -> float:
-        try:
-            return float(os.getenv(name, default))
-        except ValueError:
-            return default
-
-    prices = {
-        "input_tokens": price("PRICE_INPUT_PER_MTOK", 3.0),
-        "output_tokens": price("PRICE_OUTPUT_PER_MTOK", 15.0),
-        "cache_creation_input_tokens": price("PRICE_CACHE_WRITE_PER_MTOK", 3.75),
-        "cache_read_input_tokens": price("PRICE_CACHE_READ_PER_MTOK", 0.30),
-    }
+    from db.cache import usd as usd_of
 
     def usd(prefix: str) -> float:
-        return round(sum(counters.get(f"{prefix}_{k}", 0) * p / 1e6 for k, p in prices.items()), 4)
+        return usd_of(counters, f"{prefix}_")
+
+    # Every Claude call reports its tokens (usage.py), so this covers all modes, retries and
+    # fallbacks. Prices are Sonnet's unless PRICE_* is set, so cheaper models read high.
+    agents = sorted({k.split("_")[1] for k in counters if k.startswith("agent_")})
+    by_agent = {a: usd(f"agent_{a}") for a in agents}
 
     def rate(hit_keys: list[str], miss_key: str) -> float | None:
         hits = sum(counters.get(k, 0) for k in hit_keys)
@@ -504,7 +514,13 @@ def metrics() -> dict:
         "ask": ask,
         "result_cache_hit_rate": rate(["result_redis_hits", "result_db_hits"], "result_misses"),
         "search_cache_hit_rate": rate(["search_hits"], "search_misses"),
-        "estimated_usd": {"spent": usd("spent"), "saved_by_cache": usd("saved")},
+        "estimated_usd": {
+            "spent": usd("spent"),
+            "saved_by_cache": usd("saved"),
+            "by_agent": by_agent,
+            "today": services.cache.spent_today_usd(),
+            "daily_budget": float(os.getenv("DAILY_BUDGET_USD", "0") or 0) or None,
+        },
         "counters": counters,
         "jobs": jobs,
     }

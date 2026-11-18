@@ -54,3 +54,8 @@ import agents.search_agent as _sa  # noqa: E402
 _sa.SentenceTransformer = FakeEmbedder  # type: ignore[assignment]
 os.environ.setdefault("CHROMA_DB_PATH", tempfile.mkdtemp(prefix="lk-chroma-"))
 os.environ.setdefault("ANTHROPIC_API_KEY", "test-key")
+# Limits are off by default in tests (they share one client IP and one Redis); the tests in
+# test_production.py turn them on explicitly.
+os.environ.setdefault("RATE_LIMIT_PER_HOUR", "0")
+os.environ.setdefault("ASK_RATE_LIMIT_PER_HOUR", "0")
+os.environ.setdefault("LOG_FORMAT", "text")

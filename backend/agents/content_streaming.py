@@ -25,6 +25,7 @@ The blocking `/process` endpoint keeps using ContentAgent.process unchanged.
 
 from __future__ import annotations
 
+import usage
 import hashlib
 import logging
 import threading
@@ -295,6 +296,7 @@ class StreamingContentAgent(ContentAgent):
                 for section, text in parser.close():
                     on_delta(section, text)
                 message = stream.get_final_message()
+            usage.report("student", message)
         except ContentCancelled:
             raise
         except Exception as exc:
@@ -357,6 +359,7 @@ class StreamingContentAgent(ContentAgent):
                     if should_stop():
                         raise StructuredCallCancelled()
                     parts.append(piece)
+                usage.report("student", stream.get_final_message())
             return self._parse_json_with_retry("".join(parts), transcript=transcript)
 
         try:

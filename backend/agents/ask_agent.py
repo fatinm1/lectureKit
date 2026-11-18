@@ -17,6 +17,7 @@ cheaper model. First-turn answers are cached per (lecture, normalized question).
 
 from __future__ import annotations
 
+import usage as usage_mod
 import hashlib
 import json
 import inspect
@@ -40,9 +41,11 @@ ASK_SYSTEM = (
     "transcript excerpts you are given. Rules:\n"
     "- Cite every claim with the excerpt number(s) in square brackets right after it, e.g. "
     "\"Gradient descent follows the negative gradient [2].\" Use [1][3] or [1, 3] for several.\n"
-    "- Use only the excerpts. If they don't contain the answer, say plainly that this part of "
-    "the lecture doesn't cover it (no citation), and mention what the excerpts do cover if useful. "
-    "Do not fill gaps from general knowledge.\n"
+    "- Use only the excerpts. If they don't contain the answer, say plainly that the lecture "
+    "doesn't cover it (no citation), and mention what it does cover if useful. Do not fill gaps "
+    "from general knowledge.\n"
+    "- Talk about \"the lecture\" or \"the lecturer\", never \"the excerpts\": the student "
+    "doesn't see them.\n"
     "- Be concise: 2-6 sentences unless the student asks for more. Plain prose, no headings.\n"
     "- Respond in English."
 )
@@ -148,6 +151,7 @@ class AskAgent:
                 parts.append(piece)
                 yield piece
             message = stream.get_final_message()
+        usage_mod.report("ask", message)
 
         answer = "".join(parts).strip()
         citations = extract_citations(answer, [s.n for s in sources])

@@ -15,6 +15,7 @@ Data flow: Consumes Transcript Agent output; returns outline/summaries/cards.
 
 from __future__ import annotations
 
+import usage
 import json
 import os
 import re
@@ -195,6 +196,8 @@ class ContentAgent:
                     ) from exc2
             else:
                 raise ContentAgentError(f"Claude API call failed: {type(exc).__name__}") from exc
+
+        usage.report("student", response)
 
         # Step: Anthropic returns a list of content blocks; concatenate text blocks defensively.
         parts: List[str] = []

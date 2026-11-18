@@ -64,6 +64,32 @@ python scripts/measure_ttfc.py --api $API <url1> <url2> <url3>
 The template also exposes a public TCP proxy for desktop SQL clients. If you don't need that,
 remove the TCP proxy in the pgvector service's **Settings → Networking**.
 
+## Protecting your Anthropic balance (recommended)
+
+Set these on the backend service. Each takes effect on the next deploy.
+
+| Name | Suggested value | What it does |
+|---|---|---|
+| `DAILY_BUDGET_USD` | `0.50` | Once today's estimated Claude spend (UTC) reaches this, new AI requests get a 503 until midnight UTC. Unset or `0` turns it off. |
+| `RATE_LIMIT_PER_HOUR` | `20` (default) | Runs (study kits, audits, maps, translations) per visitor IP per hour. `0` turns it off. |
+| `ASK_RATE_LIMIT_PER_HOUR` | `60` (default) | Chat questions per visitor IP per hour. |
+| `ANTHROPIC_MAP_MODEL` / `ANTHROPIC_ASK_MODEL` | a Haiku model ID | Runs the long-lecture notes and the chat on a cheaper model. |
+
+`GET /metrics` shows `estimated_usd.today`, `daily_budget` and spend per agent. Estimates use
+Sonnet prices unless you set `PRICE_*`, so with cheaper models they read high, which errs on the
+safe side for the budget.
+
+## Errors and logs
+
+- Logs are JSON, one line per event, so Railway's log search can filter on fields:
+  `@level:error`, `@path:/ask`, `@status:429`, or `@request_id:<id>` to follow one request.
+  Every response carries an `X-Request-ID` header to search by.
+- Error tracking: create a free Sentry project (platform: FastAPI), then set `SENTRY_DSN` on the
+  backend. `/health` shows `"sentry": true` once it's on. Request bodies and cookies are never
+  sent. Leave it unset to disable.
+- Product analytics: set `NEXT_PUBLIC_POSTHOG_KEY` (and `NEXT_PUBLIC_POSTHOG_HOST` if you're on
+  PostHog EU) in Vercel, then redeploy the frontend. Unset, posthog-js isn't even downloaded.
+
 ## Later: a separate worker service
 
 You can run the worker on its own (`arq jobs.worker.WorkerSettings`) to scale it independently of the
