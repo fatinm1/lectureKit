@@ -16,6 +16,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { AppSubpageHeader } from "../components/app/AppSubpageHeader";
+import { AskPanel } from "../components/app/AskPanel";
 import { MarketingScrollReveal } from "../components/marketing/MarketingScrollReveal";
 
 import type { LectureSession } from "../../types/lecture";
@@ -67,7 +68,7 @@ function PendingNote({ label }: { label: string }): JSX.Element {
   );
 }
 
-type RightTab = "summary" | "flashcards" | "search";
+type RightTab = "summary" | "flashcards" | "search" | "ask";
 
 type SearchResult = {
   text: string;
@@ -400,6 +401,7 @@ export default function StudyPage(): JSX.Element {
         { id: "summary" as const, label: "Summary" },
         { id: "flashcards" as const, label: "Flashcards" },
         { id: "search" as const, label: "Search" },
+        { id: "ask" as const, label: "Ask" },
       ] as const,
     []
   );
@@ -934,6 +936,20 @@ export default function StudyPage(): JSX.Element {
                     </button>
                   </div>
                 </div>
+              ) : null}
+
+              {rightTab === "ask" ? (
+                pending.index ? (
+                  <PendingNote label="Indexing transcript…" />
+                ) : (
+                  <AskPanel
+                    key={session.video_id}
+                    videoId={session.video_id}
+                    youtubeUrl={session.youtube_url}
+                    available={Boolean(baseSession.indexed)}
+                    seekTo={seekTo}
+                  />
+                )
               ) : null}
 
               {rightTab === "search" ? (

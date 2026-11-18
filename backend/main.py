@@ -30,7 +30,8 @@ from budget import AIBudgetMiddleware
 from fastapi import FastAPI, HTTPException
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
+from pydantic import BaseModel, Field
 
 from jobs.routes import lifespan, router as jobs_router
 from models.schemas import (
@@ -68,7 +69,7 @@ app = FastAPI(
 
 # Per-process rolling budget on the endpoints that spend Claude / Supadata credits.
 app.add_middleware(
-    AIBudgetMiddleware, paths=["/process", "/faculty", "/provost", "/translate", "/jobs"]
+    AIBudgetMiddleware, paths=["/process", "/faculty", "/provost", "/translate", "/jobs", "/ask"]
 )
 
 # Step: Return a concise, user-friendly 422 instead of a large Pydantic error tree.
@@ -354,6 +355,93 @@ def search_video(payload: SearchRequest) -> SearchResponse:
     return SearchResponse(results=results, query=query, video_id=video_id)
 
 
+class AskTurn(BaseModel):
+    question: str
+    answer: str
+
+
+class AskRequest(BaseModel):
+    youtube_url: str = Field(..., description="Full YouTube URL of a processed lecture.")
+    question: str = Field(..., description="The student's question.")
+    history: list[AskTurn] = Field(default_factory=list, description="Earlier turns, oldest first.")
+
+
+@app.post("/ask")
+def ask_lecture(payload: AskRequest) -> StreamingResponse:
+    """
+    "Ask the lecture": a grounded answer with inline [n] citations, streamed as SSE.
+
+    Events: `sources` (the numbered excerpts, with time ranges) → `delta` × N (answer text)
+    → `done` ({answer, citations, grounded, cached}) | `error`. Validation and "not processed"
+    errors are normal HTTP errors, returned before the stream starts.
+    """
+    from agents.ask_agent import (
+        MAX_QUESTION_CHARS,
+        N_SOURCES,
+        normalize_question,
+        sources_from_hits,
+        sse,
+    )
+
+    question = (payload.question or "").strip()
+    if not question:
+        raise HTTPException(status_code=422, detail="Question must be a non-empty string.")
+    if len(question) > MAX_QUESTION_CHARS:
+        raise HTTPException(status_code=422, detail=f"Question is too long (max {MAX_QUESTION_CHARS} characters).")
+    try:
+        video_id = extract_youtube_video_id(payload.youtube_url)
+    except InvalidYouTubeUrlError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    try:
+        hits = services.search_agent.search(video_id=video_id, query=question, n_results=N_SOURCES)
+    except SearchAgentError as exc:
+        if "not processed" in str(exc) or "Collection not found" in str(exc):
+            raise HTTPException(status_code=404, detail="Video has not been processed yet.") from exc
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    sources = sources_from_hits(hits)
+    public_sources = [s.public() for s in sources]
+
+    agent = services.get_ask_agent()
+    history = [t.model_dump() for t in payload.history]
+    # Only first questions are cached: a follow-up's answer depends on the conversation.
+    cache_key = None if history else f"{video_id}:{agent.prompt_version}:{normalize_question(question)}"
+    cached = services.cache.get_answer(cache_key) if cache_key else None
+
+    def events():
+        yield sse("sources", {"video_id": video_id, "sources": public_sources})
+        if cached is not None:
+            yield sse("delta", {"text": cached["answer"]})
+            yield sse("done", {**cached, "cached": True})
+            return
+        it = agent.answer_stream(question, sources, history)
+        try:
+            while True:
+                try:
+                    piece = next(it)
+                except StopIteration as stop:
+                    result = stop.value
+                    break
+                yield sse("delta", {"text": piece})
+        except Exception as exc:  # mid-stream: the HTTP status is already 200
+            logger.warning("ask failed for %s: %s: %s", video_id, type(exc).__name__, exc)
+            yield sse("error", {"message": "Could not answer that right now. Please try again."})
+            return
+        finally:
+            it.close()  # client disconnected → stop Claude too
+        done = {"answer": result.answer, "citations": result.citations, "grounded": result.grounded}
+        services.cache.record_ask(result.usage, grounded=result.grounded)
+        if cache_key:
+            services.cache.save_answer(cache_key, done)
+        yield sse("done", {**done, "cached": False})
+
+    return StreamingResponse(
+        events(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
 @app.get("/metrics")
 def metrics() -> dict:
     """
@@ -403,8 +491,17 @@ def metrics() -> dict:
                 "parse_failure_rate": round(1 - counts["tool"] / total, 4),
             }
 
+    answers = counters.get("ask_answers", 0)
+    ask_lookups = counters.get("ask_cache_hits", 0) + counters.get("ask_cache_misses", 0)
+    ask = {
+        "answers": answers,
+        "ungrounded_rate": round(counters.get("ask_ungrounded", 0) / answers, 4) if answers else None,
+        "cache_hit_rate": round(counters.get("ask_cache_hits", 0) / ask_lookups, 4) if ask_lookups else None,
+    }
+
     return {
         "structured_outputs": structured,
+        "ask": ask,
         "result_cache_hit_rate": rate(["result_redis_hits", "result_db_hits"], "result_misses"),
         "search_cache_hit_rate": rate(["search_hits"], "search_misses"),
         "estimated_usd": {"spent": usd("spent"), "saved_by_cache": usd("saved")},

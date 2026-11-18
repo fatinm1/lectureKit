@@ -107,6 +107,17 @@ def get_faculty_agent() -> FacultyAgent:
 
 
 _notes_agent = None
+_ask_agent = None
+
+
+def get_ask_agent():
+    """"Ask the lecture" (agents/ask_agent.py)."""
+    global _ask_agent
+    if _ask_agent is None:
+        from agents.ask_agent import AskAgent
+
+        _ask_agent = AskAgent()
+    return _ask_agent
 
 
 def get_notes_agent():

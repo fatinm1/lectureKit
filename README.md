@@ -32,6 +32,7 @@ A college student pastes a lecture URL and gets:
 - Summaries at three depths — 90 seconds, 5 minutes, and full
 - 10 flashcards with source timestamp citations
 - Semantic search — finds the exact moment in the video that answers any question
+- Ask the lecture — a chat that answers from the lecture only, with timestamp citations
 - Bilingual support in English, Spanish, French, Bengali, and Arabic
 
 ### Capability 2 — Faculty
@@ -145,6 +146,18 @@ With `DATABASE_URL` set (Postgres + pgvector), LectureKit stores everything it w
 - **`GET /metrics`** reports cache hit rates, median latency for hits versus misses, Claude tokens spent, and tokens and dollars saved by the cache. The dollar figures are estimates; prices are set by environment variables.
 
 Without `DATABASE_URL` the app behaves as before: no result cache, and search uses local ChromaDB.
+
+---
+
+## Ask the lecture
+
+A chat on the study page that answers questions using only what was said in the lecture.
+
+1. **Retrieve.** The question is embedded and the 5 closest transcript chunks are pulled from the same pgvector index as search. They're numbered [1]–[5] in lecture order, each with its time range.
+2. **Answer.** Claude gets only those excerpts and must cite every claim inline ("…the negative gradient [2]."). If the excerpts don't answer the question it has to say so, not fall back on general knowledge. The answer streams over SSE (`sources` → `delta` × N → `done`), and Stop or closing the tab ends the Claude call too.
+3. **Check.** The server keeps only citations that point at a retrieved excerpt. An answer with no valid citation is marked `grounded: false`, and the UI says it may not be covered by the lecture. Valid citations become timestamp chips that seek the video.
+
+Follow-ups work: the last 3 turns go back as plain Q/A, but their excerpts aren't resent, which keeps follow-up questions cheap. First questions are cached per lecture and normalized question for 7 days. Answers are capped at 700 tokens, and `ANTHROPIC_ASK_MODEL` can point the chat at a cheaper model. `/ask` is behind the same per-minute budget as the other AI endpoints, and `/metrics` reports answers, the ungrounded rate and the cache hit rate. The conversation is kept per lecture in the browser, so a refresh doesn't lose it.
 
 ---
 
@@ -309,6 +322,7 @@ npm run dev
 | MAP_SECTION_WORDS | Target words per map section (default `4000`) |
 | MAP_CONCURRENCY | Sections mapped in parallel (default `4`) |
 | ANTHROPIC_MAP_MODEL | Model for the map step (default: `ANTHROPIC_MODEL`) |
+| ANTHROPIC_ASK_MODEL | Model for "Ask the lecture" (default: `ANTHROPIC_MODEL`) |
 
 ### Frontend (`frontend/.env.local`)
 
@@ -330,6 +344,7 @@ npm run dev
 | GET | /jobs/{job_id}/events | Server-Sent Events progress stream (replays from start or `Last-Event-ID`) |
 | POST | /process | Student mode, blocking (fallback when Redis isn't configured) |
 | POST | /search | Semantic search for a processed video |
+| POST | /ask | "Ask the lecture": grounded answer with `[n]` citations, streamed as SSE |
 | POST | /translate | Translate study materials to a target language |
 | POST | /faculty | Faculty audit report |
 | POST | /provost | Provost curriculum map (multiple URLs) |
