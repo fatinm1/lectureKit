@@ -128,12 +128,16 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
     allow_credentials=False,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["*"],
     expose_headers=["*"],
 )
 
 app.include_router(jobs_router)
+
+import accounts_routes  # noqa: E402
+
+app.include_router(accounts_routes.router)
 
 
 @app.get("/health")

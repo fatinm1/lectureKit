@@ -17,6 +17,7 @@ import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 
 import type { FacultySession, LectureSession, ProvostSession } from "../../../types/lecture";
 import { createJob, JobRequestError, subscribeToJob, type CreateJobBody, type JobSubscription } from "../../../utils/jobs";
+import { recordFinishedJob } from "../../../utils/account";
 import { track } from "../../../utils/analytics";
 
 const FEATURES = ["Instant Summaries", "Smart Flashcards", "Semantic Search"] as const;
@@ -291,6 +292,7 @@ export function ProcessUrlPanel(): JSX.Element {
             if (jobMode === "faculty") persistFacultySession(result);
             else if (jobMode === "provost") persistProvostSession(result);
             else persistStudentSession(result);
+            void recordFinishedJob(jobId); // into the library if signed in, else remembered for a day
             window.setTimeout(() => {
               router.push(jobMode === "faculty" ? "/report" : jobMode === "provost" ? "/curriculum" : "/study");
             }, 400);

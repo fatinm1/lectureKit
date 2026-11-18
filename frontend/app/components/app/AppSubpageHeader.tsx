@@ -7,6 +7,8 @@
 import { useRouter } from "next/navigation";
 import type { ReactNode } from "react";
 
+import { AccountNav } from "./AccountNav";
+
 type AppSubpageHeaderProps = {
   title: string;
   right?: ReactNode;
@@ -31,7 +33,10 @@ export function AppSubpageHeader({ title, right }: AppSubpageHeaderProps): JSX.E
           </span>
           <h1 className="truncate font-lk-serif text-lg font-normal text-white md:text-xl">{title}</h1>
         </div>
-        {right ? <div className="flex shrink-0 items-center gap-3">{right}</div> : null}
+        <div className="flex shrink-0 items-center gap-4">
+          {right}
+          <AccountNav compact />
+        </div>
       </div>
     </header>
   );

@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { AppSubpageHeader } from "../components/app/AppSubpageHeader";
+import { SharedBanner } from "../components/app/SharedBanner";
+import { ApiError, loadFromUrl } from "../../utils/account";
 import { MarketingScrollReveal } from "../components/marketing/MarketingScrollReveal";
 import type { ObjectiveAnalysis, ProvostSession } from "../../types/lecture";
 
@@ -40,15 +42,43 @@ function StatusBadge({ status }: { status: "covered" | "partial" | "missing" }) 
 export default function CurriculumPage() {
   const router = useRouter();
   const [session, setSession] = useState<ProvostSession | null>(null);
+  const [sharedTitle, setSharedTitle] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
-    const stored = window.localStorage.getItem("lecturekit_provost_session");
-    if (!stored) {
-      router.push("/app");
-      return;
-    }
-    setSession(JSON.parse(stored) as ProvostSession);
+    let cancelled = false;
+    loadFromUrl()
+      .then((saved) => {
+        if (cancelled) return;
+        if (saved) {
+          // A library item or share link (?item= / ?share=): a saved snapshot.
+          setSession(saved.payload as ProvostSession);
+          if (saved.shared) setSharedTitle(saved.title);
+          return;
+        }
+        const stored = window.localStorage.getItem("lecturekit_provost_session");
+        if (!stored) {
+          router.push("/app");
+          return;
+        }
+        setSession(JSON.parse(stored) as ProvostSession);
+      })
+      .catch((e) => setLoadError(e instanceof ApiError ? e.message : "Couldn't open this curriculum map."));
+    return () => {
+      cancelled = true;
+    };
   }, [router]);
+
+  if (loadError) {
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center gap-3 bg-zinc-950 px-6 text-center">
+        <p className="text-sm text-zinc-300">{loadError}</p>
+        <a href="/app" className="text-sm text-zinc-500 underline-offset-2 hover:text-white hover:underline">
+          Back to LectureKit
+        </a>
+      </div>
+    );
+  }
 
   if (!session) {
     return (
@@ -78,6 +108,7 @@ export default function CurriculumPage() {
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-200">
       <AppSubpageHeader title="Curriculum Coverage Map" right={headerRight} />
+      {sharedTitle ? <SharedBanner title={sharedTitle} /> : null}
 
       <div className="mx-auto max-w-6xl space-y-8 px-6 py-8">
         {session.failed_urls && session.failed_urls.length > 0 && (

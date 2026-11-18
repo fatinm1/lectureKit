@@ -58,4 +58,5 @@ os.environ.setdefault("ANTHROPIC_API_KEY", "test-key")
 # test_production.py turn them on explicitly.
 os.environ.setdefault("RATE_LIMIT_PER_HOUR", "0")
 os.environ.setdefault("ASK_RATE_LIMIT_PER_HOUR", "0")
+os.environ.setdefault("AUTH_RATE_LIMIT_PER_HOUR", "0")
 os.environ.setdefault("LOG_FORMAT", "text")

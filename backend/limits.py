@@ -30,6 +30,7 @@ logger = logging.getLogger("lecturekit.limits")
 
 RUN_PATHS = ("/jobs", "/process", "/faculty", "/provost", "/translate")
 ASK_PATHS = ("/ask",)
+AUTH_PATHS = ("/auth/login", "/auth/signup")  # slows password guessing; no Claude cost
 
 
 def _env_int(name: str, default: int) -> int:
@@ -97,7 +98,9 @@ class GuardMiddleware:
             await self.app(scope, receive, send)
             return
         path = scope.get("path", "")
-        if path in ASK_PATHS:
+        if path in AUTH_PATHS:
+            group, limit = "auth", _env_int("AUTH_RATE_LIMIT_PER_HOUR", 10)
+        elif path in ASK_PATHS:
             group, limit = "ask", _env_int("ASK_RATE_LIMIT_PER_HOUR", 60)
         elif path in RUN_PATHS:
             group, limit = "run", _env_int("RATE_LIMIT_PER_HOUR", 20)
@@ -106,7 +109,7 @@ class GuardMiddleware:
             return
 
         budget = _env_float("DAILY_BUDGET_USD", 0.0)
-        if budget > 0:
+        if budget > 0 and group != "auth":
             spent = await asyncio.to_thread(self._spent_today)
             if spent >= budget:
                 logger.warning("daily budget reached", extra={"spent_usd": spent, "budget_usd": budget, "path": path})
@@ -129,8 +132,12 @@ class GuardMiddleware:
                 await _respond(
                     send,
                     429,
-                    f"You've hit the limit of {limit} {'questions' if group == 'ask' else 'requests'} an hour. "
-                    f"Try again in about {minutes} minute{'s' if minutes != 1 else ''}.",
+                    (
+                        f"Too many sign-in attempts from your network. Try again in about {minutes} minutes."
+                        if group == "auth"
+                        else f"You've hit the limit of {limit} {'questions' if group == 'ask' else 'requests'} an hour. "
+                        f"Try again in about {minutes} minute{'s' if minutes != 1 else ''}."
+                    ),
                     retry_after=retry_after,
                 )
                 return

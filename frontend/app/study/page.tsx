@@ -20,6 +20,8 @@ import { AskPanel } from "../components/app/AskPanel";
 import { MarketingScrollReveal } from "../components/marketing/MarketingScrollReveal";
 
 import type { LectureSession } from "../../types/lecture";
+import { SharedBanner } from "../components/app/SharedBanner";
+import { ApiError, loadFromUrl, recordFinishedJob } from "../../utils/account";
 import { track } from "../../utils/analytics";
 import { formatTimestamp } from "../../utils/format";
 import { cancelJob, fetchJob, subscribeToJob, type StudentResult, type SummarySection } from "../../utils/jobs";
@@ -191,6 +193,10 @@ export default function StudyPage(): JSX.Element {
   const [stoppedNote, setStoppedNote] = useState<string | null>(null);
   /** Long lectures: "3 of 6 sections read" while the map step runs, null otherwise. */
   const [mapProgress, setMapProgress] = useState<string | null>(null);
+  /** Opened from a share link: show the "shared with you" banner. */
+  const [sharedTitle, setSharedTitle] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [savedNote, setSavedNote] = useState<string | null>(null);
   const jobIdRef = useRef<string | null>(null);
   const isBuilding = pending.outline || pending.summaries || pending.flashcards || pending.index;
 
@@ -204,7 +210,26 @@ export default function StudyPage(): JSX.Element {
   }, []);
 
   useEffect(() => {
-    const jobId = new URLSearchParams(window.location.search).get("job");
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.get("item") || urlParams.get("share")) {
+      // A library item or a share link: a saved snapshot, not the last local session.
+      let cancelled = false;
+      loadFromUrl()
+        .then((saved) => {
+          if (cancelled || !saved) return;
+          const loaded = sessionFromResult(saved.payload as StudentResult);
+          setBaseSession(loaded);
+          setSession(loaded);
+          setActiveOutlineIndex(0);
+          if (saved.shared) setSharedTitle(saved.title);
+        })
+        .catch((e) => setLoadError(e instanceof ApiError ? e.message : "Couldn't open this study kit."));
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    const jobId = urlParams.get("job");
 
     if (jobId) {
       jobIdRef.current = jobId;
@@ -285,6 +310,9 @@ export default function StudyPage(): JSX.Element {
               setFromCache(Boolean(timings.cache_hit));
               console.log("[LectureKit] job timings (s)", { ...timings, first_content_s: timings.transcript_s });
               finish(sessionFromResult(event.data.result as StudentResult));
+              void recordFinishedJob(jobId).then((saved) => {
+                if (saved) setSavedNote("Saved to your library");
+              });
               return;
             }
             case "failed":
@@ -627,6 +655,17 @@ export default function StudyPage(): JSX.Element {
     );
   }
 
+  if (loadError) {
+    return (
+      <main className="flex min-h-screen flex-col items-center justify-center gap-3 bg-zinc-950 px-6 text-center">
+        <p className="text-sm text-zinc-300">{loadError}</p>
+        <a href="/app" className="text-sm text-zinc-500 underline-offset-2 hover:text-white hover:underline">
+          Back to LectureKit
+        </a>
+      </main>
+    );
+  }
+
   if (!session || !baseSession || !session.video_id) {
     return (
       <main className="flex min-h-screen items-center justify-center bg-zinc-950 px-6 text-zinc-400">
@@ -663,6 +702,17 @@ export default function StudyPage(): JSX.Element {
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-200">
       <AppSubpageHeader title="Study dashboard" right={headerRight} />
+      {sharedTitle ? <SharedBanner title={sharedTitle} /> : null}
+      {savedNote ? (
+        <div className="border-b border-white/5 px-6 py-2">
+          <p className="mx-auto max-w-[1600px] text-xs text-zinc-400">
+            {savedNote} ·{" "}
+            <a href="/library" className="underline-offset-2 hover:text-white hover:underline">
+              Open library
+            </a>
+          </p>
+        </div>
+      ) : null}
       {jobError ? (
         <div className="border-b border-white/5 bg-zinc-950 px-6 py-2">
           <div className="mx-auto max-w-[1600px]">

@@ -4,6 +4,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { AppSubpageHeader } from "../components/app/AppSubpageHeader";
+import { SharedBanner } from "../components/app/SharedBanner";
+import { ApiError, loadFromUrl } from "../../utils/account";
 import { MarketingScrollReveal } from "../components/marketing/MarketingScrollReveal";
 import type { FacultySession } from "../../types/lecture";
 
@@ -28,6 +30,8 @@ function ScoreRing({ score }: { score: number }) {
 export default function ReportPage() {
   const router = useRouter();
   const [session, setSession] = useState<FacultySession | null>(null);
+  const [sharedTitle, setSharedTitle] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [embedOrigin, setEmbedOrigin] = useState("");
   const playerRef = useRef<HTMLIFrameElement>(null);
 
@@ -36,12 +40,27 @@ export default function ReportPage() {
   }, []);
 
   useEffect(() => {
-    const stored = window.localStorage.getItem("lecturekit_faculty_session");
-    if (!stored) {
-      router.push("/app");
-      return;
-    }
-    setSession(JSON.parse(stored) as FacultySession);
+    let cancelled = false;
+    loadFromUrl()
+      .then((saved) => {
+        if (cancelled) return;
+        if (saved) {
+          // A library item or share link (?item= / ?share=): a saved snapshot.
+          setSession(saved.payload as FacultySession);
+          if (saved.shared) setSharedTitle(saved.title);
+          return;
+        }
+        const stored = window.localStorage.getItem("lecturekit_faculty_session");
+        if (!stored) {
+          router.push("/app");
+          return;
+        }
+        setSession(JSON.parse(stored) as FacultySession);
+      })
+      .catch((e) => setLoadError(e instanceof ApiError ? e.message : "Couldn't open this report."));
+    return () => {
+      cancelled = true;
+    };
   }, [router]);
 
   const seekTo = (seconds: number) => {
@@ -64,6 +83,17 @@ export default function ReportPage() {
     if (!vid) return "";
     return `https://www.youtube.com/embed/${vid}?enablejsapi=1&origin=${embedOrigin}&rel=0`;
   }, [session?.video_id, embedOrigin]);
+
+  if (loadError) {
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center gap-3 bg-zinc-950 px-6 text-center">
+        <p className="text-sm text-zinc-300">{loadError}</p>
+        <a href="/app" className="text-sm text-zinc-500 underline-offset-2 hover:text-white hover:underline">
+          Back to LectureKit
+        </a>
+      </div>
+    );
+  }
 
   if (!session) {
     return (
@@ -91,6 +121,7 @@ export default function ReportPage() {
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-200">
       <AppSubpageHeader title="Faculty Audit Report" right={headerRight} />
+      {sharedTitle ? <SharedBanner title={sharedTitle} /> : null}
 
       <div className="mx-auto grid max-w-7xl grid-cols-1 gap-8 px-6 py-8 lg:grid-cols-[1fr_400px]">
         <div className="space-y-8">
