@@ -22,6 +22,27 @@ LectureKit is a multi-agent AI system built for the **Cloudforce Frontier Intern
 
 ---
 
+## Results
+
+Measured in production (Nov 17–18, 2026). Quality numbers come from the eval harness ([Evals](#evals)) on a small labeled set (2 lectures, 18 search questions, 8 chat questions), so treat them as a baseline rather than a benchmark.
+
+| | Before | Now |
+|---|---|---|
+| Time to first content | 69–77 s (blocking request) | **2.7–3.1 s** (background job + SSE) |
+| First summary words | 70–81 s | **3.5–4.7 s** (streamed) |
+| Full study kit | 70–81 s | **38–48 s** (two parallel Claude calls) |
+| Same lecture again | 44 s | **7 ms** (Postgres/Redis result cache), ~$0.066 saved |
+| Lecture length read by the faculty audit | first ~40 min | **whole lecture** (map-reduce; tested on a 68-min lecture) |
+| Search: right moment in top 3 | not measured | **94%** (hit@1 78%, MRR 0.87) |
+| Chat: answerable questions citing the right moment | — | **100%** (4/4) |
+| Chat: says "the lecture doesn't cover this" when it doesn't | — | **100%** (4/4) |
+| Chat: first words / cost per question | — | **1.5–1.9 s** / **~$0.01** |
+| Study kit structure checks | not measured | **24/24** |
+
+Production checks also caught eight bugs the unit tests didn't. Two examples: a `tools` list on the streaming call made Claude drop its section markers, and CORS was missing `PATCH`, so rename failed in browsers. Each fix came with a test or eval check for that case.
+
+---
+
 ## Three Capabilities. One URL
 
 ### Capability 1 — Student
@@ -282,7 +303,7 @@ Agent 2 and Agent 3 run in parallel in Student mode. With background jobs, every
 
 ## Performance
 
-Measured in production on Nov 17, 2026, with three lectures (19 min, 50 min, 2.5 h):
+Measured in production on Nov 17–18, 2026, with lectures of 19 min, 50 min, 68 min and 2.5 h:
 
 | Metric | Value |
 |--------|-------|
@@ -290,8 +311,9 @@ Measured in production on Nov 17, 2026, with three lectures (19 min, 50 min, 2.5
 | Time to first content, background jobs + SSE | **2.7–3.1 s** |
 | Search usable after submit | 4.2–6.4 s |
 | First summary words, streamed (before: 70–81 s) | **3.5–4.7 s** |
-| Full study kit: one call (before) → two parallel calls | 70–81 s → **41–48 s** |
-| Transcript tokens the second call reads from prompt cache | 4.1k / 7.4k / 27.5k (all of it) |
+| Full study kit: one call (before) → two parallel calls | 70–81 s → **38–48 s** |
+| Repeat request for a processed lecture (result cache) | 44 s → **7 ms** |
+| "Ask the lecture": first words / cost per question | **1.5–1.9 s** / ~$0.01 |
 | `POST /jobs` server time | 14 ms |
 | Semantic search latency | <0.02 seconds |
 | Chunks from 2.5hr lecture | 50 |
