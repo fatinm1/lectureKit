@@ -106,6 +106,19 @@ def get_faculty_agent() -> FacultyAgent:
     return _faculty_agent
 
 
+_notes_agent = None
+
+
+def get_notes_agent():
+    """Map step for long lectures (agents/map_reduce.py). Built lazily like the other agents."""
+    global _notes_agent
+    if _notes_agent is None:
+        from agents.map_reduce import NotesAgent
+
+        _notes_agent = NotesAgent()
+    return _notes_agent
+
+
 def get_provost_agent() -> ProvostAgent:
     global _provost_agent
     if _provost_agent is None:

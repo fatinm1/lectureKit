@@ -4,12 +4,17 @@ Purpose: The agent pipelines for each mode, written as background jobs that repo
 Each function runs the same agents as the synchronous endpoints in `main.py`, but emits an
 event the moment each stage finishes instead of returning one response at the end:
 
-Student:  started → transcript_fetched ─┬→ summary_delta × N → summaries_ready   (streamed Claude call)
+Student:  started → transcript_fetched [→ mapping → section_mapped × N → notes_ready] ─┬→ summary_delta × N → summaries_ready   (streamed Claude call)
                                         ├→ outline_ready → flashcards_ready      (structured Claude call)
                                         └→ chunks_indexed                        (embeddings)
           → done | failed | cancelled     (the three branches run concurrently)
-Faculty:  started → transcript_fetched → analyzing → done | failed
-Provost:  started → lecture_fetched / lecture_failed (per URL) → analyzing → done | failed
+Faculty:  started → transcript_fetched [→ map events] → analyzing → done | failed
+Provost:  started → lecture_fetched / lecture_failed (per URL) [→ map events per long lecture]
+          → analyzing → done | failed
+
+The bracketed map events only happen for lectures longer than the mode's word budget
+(agents/map_reduce.py): those are condensed into section notes first, and the agents read the
+notes instead of the raw transcript.
 
 Agents are synchronous (Anthropic SDK, yt-dlp, sentence-transformers), so every call goes
 through `asyncio.to_thread` to keep the worker's event loop free for other jobs and for the
@@ -26,7 +31,9 @@ from dataclasses import asdict
 from typing import Any
 
 import services
+from agents import map_reduce
 from agents.content_streaming import SECTIONS, ContentCancelled, StreamedSummaries, StructuredContent
+from agents.structured_call import StructuredCallCancelled
 from jobs.events import JobEventBus
 from services import classify_error
 from utils.youtube import extract_youtube_video_id
@@ -77,6 +84,56 @@ async def _load_or_fetch_transcript(youtube_url: str) -> tuple[str, list, bool]:
     if services.store is not None:
         await _safe(services.store.save_transcript, video_id, youtube_url, chunks)
     return video_id, chunks, False
+
+
+async def _llm_chunks(
+    bus: JobEventBus,
+    job_id: str,
+    video_id: str,
+    chunks: list,
+    budget: int,
+    stop: threading.Event | None = None,
+    lecture_index: int | None = None,
+) -> tuple[list, dict[str, Any] | None]:
+    """
+    What to send Claude for this lecture: the transcript itself if it fits the mode's word
+    budget, otherwise a digest of map-step notes (cached per lecture, shared by every mode).
+    Returns (chunks, map_info); map_info is None on the direct path.
+    """
+    if not map_reduce.needs_map(chunks, budget):
+        return list(chunks), None
+    agent = services.get_notes_agent()
+    version = agent.prompt_version
+    extra = {} if lecture_index is None else {"lecture_index": lecture_index}
+    t = time.perf_counter()
+
+    cached = await _safe(services.cache.get_result, video_id, "notes", "en", version)
+    if cached is not None:
+        notes = map_reduce.LectureNotes.from_payload(cached.payload)
+        await bus.emit(job_id, "notes_ready", {"sections": len(notes.sections), "cached": True, **extra})
+        return map_reduce.digest_chunks(notes, chunks), {"cached": True, "sections": len(notes.sections)}
+
+    total = len(map_reduce.split_sections(chunks))
+    await bus.emit(
+        job_id, "mapping", {"sections": total, "words": map_reduce.word_count(chunks), **extra}
+    )
+    loop = asyncio.get_running_loop()
+
+    def progress(done: int, of: int) -> None:  # called from the map threads
+        asyncio.run_coroutine_threadsafe(
+            bus.emit(job_id, "section_mapped", {"done": done, "total": of, **extra}), loop
+        )
+
+    should_stop = stop.is_set if stop is not None else (lambda: False)
+    notes = await asyncio.to_thread(agent.notes_for, chunks, should_stop, progress)
+    await _safe(services.cache.save_result, video_id, "notes", "en", version, notes.payload(), notes.usage)
+    await bus.emit(job_id, "notes_ready", {"sections": len(notes.sections), "cached": False, **extra})
+    return map_reduce.digest_chunks(notes, chunks), {
+        "cached": False,
+        "sections": len(notes.sections),
+        "map_s": round(time.perf_counter() - t, 3),
+        "usage": notes.usage,
+    }
 
 
 async def _replay_cached_student(
@@ -167,7 +224,6 @@ async def run_student(bus: JobEventBus, job_id: str, youtube_url: str) -> None:
             raise _Cancelled()
 
         stage = "content"
-        cache_warm = threading.Event()
         deltas: asyncio.Queue = asyncio.Queue()
 
         def on_delta(section: str, text: str) -> None:
@@ -217,12 +273,29 @@ async def run_student(bus: JobEventBus, job_id: str, youtube_url: str) -> None:
             await bus.emit(job_id, "chunks_indexed", {"indexed": ok})
             return ok
 
+        # Indexing always uses the full transcript (search covers the whole lecture), so it
+        # starts now and runs alongside the map step as well as the two content calls.
+        index_task = asyncio.create_task(index())
+
+        stage = "map"
+        try:
+            llm_chunks, map_info = await _llm_chunks(
+                bus, job_id, video_id, chunks, map_reduce.STUDENT_WORD_BUDGET, stop
+            )
+        except BaseException as exc:
+            stop.set()
+            await asyncio.gather(index_task, return_exceptions=True)
+            if isinstance(exc, (StructuredCallCancelled, ContentCancelled)):
+                raise _Cancelled() from exc
+            raise
+        if map_info is not None:
+            timings["map"] = {k: v for k, v in map_info.items() if k != "usage"}
+        stage = "content"
+
         async def summaries() -> StreamedSummaries:
             pump = asyncio.create_task(pump_deltas())
             try:
-                result = await asyncio.to_thread(
-                    agent.stream_summaries, chunks, on_delta, stop.is_set, cache_warm
-                )
+                result = await asyncio.to_thread(agent.stream_summaries, llm_chunks, on_delta, stop.is_set)
             except BaseException:
                 stop.set()
                 deltas.put_nowait(None)
@@ -244,7 +317,7 @@ async def run_student(bus: JobEventBus, job_id: str, youtube_url: str) -> None:
             try:
                 # No cache_warm wait: the two calls no longer share a cache prefix, so the
                 # structured call starts at once instead of waiting for the summaries stream.
-                result = await asyncio.to_thread(agent.generate_structured, chunks, stop.is_set)
+                result = await asyncio.to_thread(agent.generate_structured, llm_chunks, stop.is_set)
             except BaseException:
                 stop.set()
                 raise
@@ -256,7 +329,7 @@ async def run_student(bus: JobEventBus, job_id: str, youtube_url: str) -> None:
             await bus.emit(job_id, "flashcards_ready", {"flashcards": flashcards})
             return result
 
-        results = await asyncio.gather(summaries(), structured(), index(), return_exceptions=True)
+        results = await asyncio.gather(summaries(), structured(), index_task, return_exceptions=True)
         errors = [r for r in results[:2] if isinstance(r, BaseException)]
         if errors and all(isinstance(e, ContentCancelled) for e in errors):
             raise _Cancelled()
@@ -270,6 +343,8 @@ async def run_student(bus: JobEventBus, job_id: str, youtube_url: str) -> None:
 
         timings["total_s"] = round(time.perf_counter() - t0, 3)
         timings["usage"] = {"summaries": asdict(summ.usage), "structured": asdict(struct.usage)}
+        if map_info is not None and map_info.get("usage"):
+            timings["usage"]["map"] = map_info["usage"]
         result = {
             "video_id": video_id,
             "youtube_url": youtube_url,
@@ -334,9 +409,12 @@ async def run_faculty(bus: JobEventBus, job_id: str, youtube_url: str) -> None:
             {"video_id": video_id, "youtube_url": youtube_url, "chunk_count": len(chunks)},
         )
 
+        stage = "map"
+        llm_chunks, map_info = await _llm_chunks(bus, job_id, video_id, chunks, map_reduce.FACULTY_WORD_BUDGET)
+
         stage = "analysis"
         await bus.emit(job_id, "analyzing", {})
-        report = await asyncio.to_thread(lambda: agent.generate_report(chunks, video_id))
+        report = await asyncio.to_thread(lambda: agent.generate_report(llm_chunks, video_id))
         result = {"video_id": video_id, "youtube_url": youtube_url, "report": report}
         await bus.set_result(job_id, result)
         timings = {
@@ -344,6 +422,8 @@ async def run_faculty(bus: JobEventBus, job_id: str, youtube_url: str) -> None:
             "transcript_cached": transcript_from_db,
             "total_s": round(time.perf_counter() - t0, 3),
         }
+        if map_info is not None:
+            timings["map"] = {k: v for k, v in map_info.items() if k != "usage"}
         await _safe(services.cache.save_result, video_id, "faculty", "en", prompt_version, result, None)
         await bus.emit(job_id, "done", {"result": result, "timings": timings})
         await _record_job(job_id, "faculty", video_id, "done", timings=timings)
@@ -363,9 +443,7 @@ async def run_provost(bus: JobEventBus, job_id: str, youtube_urls: list[str], le
         for i, url in enumerate(youtube_urls):
             try:
                 video_id, chunks, _ = await _load_or_fetch_transcript(url)
-                lectures.append(
-                    {"video_id": video_id, "youtube_url": url, "chunks": [c.model_dump() for c in chunks]}
-                )
+                lectures.append({"video_id": video_id, "youtube_url": url, "chunks": chunks, "index": i})
                 await bus.emit(
                     job_id,
                     "lecture_fetched",
@@ -387,6 +465,19 @@ async def run_provost(bus: JobEventBus, job_id: str, youtube_urls: list[str], le
                 {"stage": "transcript", "status": 404, "message": "Could not retrieve transcripts for any provided URLs"},
             )
             return
+
+        # Long lectures → notes, all lectures' map steps in parallel.
+        stage = "map"
+        digests = await asyncio.gather(
+            *(
+                _llm_chunks(bus, job_id, l["video_id"], l["chunks"], map_reduce.PROVOST_WORD_BUDGET, lecture_index=l["index"])
+                for l in lectures
+            )
+        )
+        lectures = [
+            {"video_id": l["video_id"], "youtube_url": l["youtube_url"], "chunks": [c.model_dump() for c in d]}
+            for l, (d, _info) in zip(lectures, digests)
+        ]
 
         stage = "analysis"
         await bus.emit(job_id, "analyzing", {"lecture_count": len(lectures)})

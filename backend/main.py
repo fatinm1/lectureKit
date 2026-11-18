@@ -392,7 +392,7 @@ def metrics() -> dict:
     # Structured outputs: how often each path was needed, per agent. "parse_failure_rate" is
     # the share of calls whose first tool call did not validate.
     structured: dict[str, dict] = {}
-    for agent in ("student", "faculty", "provost"):
+    for agent in ("student", "faculty", "provost", "map"):
         counts = {p: counters.get(f"structured_{agent}_{p}", 0) for p in ("tool", "tool_retry", "legacy_fallback", "failed")}
         total = sum(counts.values())
         if total:

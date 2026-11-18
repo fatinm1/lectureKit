@@ -148,6 +148,25 @@ Without `DATABASE_URL` the app behaves as before: no result cache, and search us
 
 ---
 
+## Long lectures (map-reduce)
+
+Each mode can only read so much in one prompt, and long lectures used to be cut silently. Faculty read the first 6,000 words (about 40 minutes). Provost read the first 4,000 words of each lecture. Student sent everything in one prompt, however long.
+
+Now every mode has a word budget, and a lecture over it goes through two steps:
+
+1. **Map.** The transcript is split on chunk boundaries into sections of about 4,000 words. Each section gets structured notes from Claude, in parallel (4 at a time): a title, a dense summary, 6–12 timestamped key points, and the terms the lecturer defines. These are forced tool calls validated by Pydantic, and every timestamp must fall inside its own section; a stray one is sent back for correction.
+2. **Reduce.** The notes are turned back into timestamped pseudo-chunks and handed to the existing agents, which format, prompt and validate exactly as before. A 2.5-hour lecture (about 22,000 words) becomes roughly 3,000 words of notes.
+
+| Mode | Budget | Over budget |
+|------|--------|-------------|
+| Student | 9,000 words (~1 h; `LONG_LECTURE_WORDS`) | summaries + outline + flashcards from the notes |
+| Faculty | 6,000 words | audit from the notes, covering the whole lecture |
+| Provost | 4,000 words per lecture | each long lecture is mapped (all in parallel); short ones stay raw |
+
+Notes are cached per lecture (`kind = "notes"`, keyed by their own prompt version), so the map step runs once and Student, Faculty and Provost all reuse it. Search always indexes the full transcript, not the notes. The study page shows "Long lecture: 3 of 6 sections read…" while the map step runs, and Stop cancels it. `ANTHROPIC_MAP_MODEL` can point the map step at a cheaper model than the rest.
+
+---
+
 ## Data Flow
 
 ```text
@@ -286,6 +305,10 @@ npm run dev
 | DATABASE_URL | Postgres + pgvector: result cache, persistent search (unset → no cache, local ChromaDB) |
 | RUN_WORKER_IN_PROCESS | Run the ARQ worker inside the API process (default `true`) |
 | WORKER_MAX_JOBS | Lectures processed concurrently per worker (default `2`) |
+| LONG_LECTURE_WORDS | Student word budget before map-reduce kicks in (default `9000`) |
+| MAP_SECTION_WORDS | Target words per map section (default `4000`) |
+| MAP_CONCURRENCY | Sections mapped in parallel (default `4`) |
+| ANTHROPIC_MAP_MODEL | Model for the map step (default: `ANTHROPIC_MODEL`) |
 
 ### Frontend (`frontend/.env.local`)
 
@@ -383,12 +406,15 @@ lectureKit/
 - timestamps fall inside the lecture
 - the outline is chronological
 - exactly 10 flashcards and 5 prioritized fixes
-- `coverage_distribution` matches the per-objective statuses
 - cited lecture numbers exist
 
 A failed check goes back to Claude once as an `is_error` tool result listing the exact errors, so the retry is a correction in context. The old text prompt and 4-strategy parser (strip fences → outermost braces → raw loads → repair call) stay as a last resort. Each call's path (`tool`, `tool_retry`, `legacy_fallback`, `failed`) is counted, and `GET /metrics` reports the first-try rate and parse-failure rate per agent.
 
-The streamed summaries call carries the same tool list with `tool_choice: none`. Tools are the first part of Anthropic's prompt-cache prefix (tools → system → messages), so this keeps both calls on one cached transcript.
+Two lessons from production, both caught by `/metrics` rather than the unit tests:
+- **Keep the streamed summaries call tool-free.** Sending the same tool list with `tool_choice: none` (to share one cached prompt prefix) made Claude drop the `@@SUMMARY_*@@` section markers, and every Student run failed.
+- **Don't ask the model for what you can compute.** The curriculum map's `coverage_distribution` is just a count of the per-objective statuses. Claude kept miscounting it, even after a retry that named the mismatch, so the server now derives it and it's no longer in the tool schema.
+
+**Map-reduce for long lectures:** see [Long lectures](#long-lectures-map-reduce).
 
 ---
 

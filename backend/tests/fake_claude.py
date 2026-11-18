@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import copy
 import json
+import re
 import threading
 import time
 from types import SimpleNamespace
@@ -70,6 +71,20 @@ class _Stream:
         return SimpleNamespace(usage=SimpleNamespace(**self.usage), content=content, stop_reason="tool_use")
 
 
+def notes_payload(user: str) -> dict:
+    """Valid section notes for whatever section is in the prompt (timestamps taken from it)."""
+    stamps = [float(t) for t in re.findall(r"\[timestamp: ([\d.]+)s\]", user)] or [0.0]
+    picks = sorted({stamps[0], stamps[len(stamps) // 2], stamps[-1]})
+    while len(picks) < 3:
+        picks.append(picks[-1])
+    return {
+        "title": f"Section at {stamps[0]:.0f}s",
+        "summary": f"Notes for the part starting at {stamps[0]:.0f}s.",
+        "key_points": [{"timestamp": t, "point": f"Idea at {t:.0f}s"} for t in picks],
+        "terms": [{"term": "gradient", "definition": "direction of steepest ascent", "timestamp": stamps[0]}],
+    }
+
+
 def tool_use(name, payload, id_="toolu_1"):
     return SimpleNamespace(type="tool_use", id=id_, name=name, input=copy.deepcopy(payload))
 
@@ -92,7 +107,11 @@ class FakeClaude:
         fail=(),
         tool_inputs=None,
         legacy_text=None,
+        notes_inputs=None,
     ):
+        # Section-notes calls (map step) are answered from `notes_inputs` if given, else
+        # generated from the prompt so they always validate.
+        self.notes_inputs = list(notes_inputs) if notes_inputs is not None else None
         self.tool_inputs = list(tool_inputs) if tool_inputs is not None else None
         self.legacy_text = legacy_text if legacy_text is not None else json.dumps(STRUCTURED)
         self.calls: list[dict] = []
@@ -131,7 +150,10 @@ class FakeClaude:
             return _Stream(self, kind, _pieces(self.legacy_text, 40), self.structured_delay, usage)
         name = kwargs["tool_choice"]["name"]
         with self._lock:
-            payload = self.tool_inputs.pop(0) if self.tool_inputs else STRUCTURED
+            if name == "record_section_notes":
+                payload = self.notes_inputs.pop(0) if self.notes_inputs else notes_payload(user)
+            else:
+                payload = self.tool_inputs.pop(0) if self.tool_inputs else STRUCTURED
         content = [tool_use(name, payload, id_=f"toolu_{len(self.calls)}")]
         return _Stream(self, kind, _pieces(json.dumps(payload), 40), self.structured_delay, usage, content=content)
 

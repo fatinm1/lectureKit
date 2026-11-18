@@ -268,6 +268,18 @@ export function ProcessUrlPanel(): JSX.Element {
                 (event.type === "lecture_failed" ? " (one could not be fetched)" : "")
             );
             return;
+          case "mapping":
+            setProgressNote(
+              (event.data.lecture_index !== undefined ? `Lecture ${event.data.lecture_index + 1} is long: ` : "Long lecture: ") +
+                `reading it in ${event.data.sections} sections first`
+            );
+            return;
+          case "section_mapped":
+            setProgressNote(
+              (event.data.lecture_index !== undefined ? `Lecture ${event.data.lecture_index + 1}: ` : "") +
+                `${event.data.done} of ${event.data.total} sections read`
+            );
+            return;
           case "analyzing":
             setProgressNote(null);
             markStep([1], 2);
