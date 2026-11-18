@@ -23,6 +23,7 @@ import {
   type LibraryItem,
   type LibraryKind,
 } from "../../utils/account";
+import { copyText } from "../../utils/clipboard";
 
 const KIND_LABEL: Record<LibraryKind, string> = { student: "Study kit", faculty: "Faculty audit", provost: "Curriculum map" };
 const KIND_STYLE: Record<LibraryKind, string> = {
@@ -135,6 +136,7 @@ function LibraryRow({
   const [title, setTitle] = useState(item.title);
   const [note, setNote] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   async function run(fn: () => Promise<void>) {
     setBusy(true);
@@ -148,13 +150,30 @@ function LibraryRow({
     }
   }
 
-  const copy = async (token: string) => {
-    try {
-      await navigator.clipboard.writeText(shareUrl(token));
-      setNote("Link copied. Anyone with it can view (not edit) this.");
-    } catch {
-      setNote(shareUrl(token));
+  // Both call copyText straight from the click (no await before it), which Safari requires.
+  const afterCopy = (ok: boolean) => {
+    if (ok) {
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2000);
+      setNote(null);
+    } else {
+      setNote("Your browser blocked copying. Select the link above and copy it.");
     }
+  };
+
+  const copyExisting = (token: string) => void copyText(shareUrl(token)).then(afterCopy);
+
+  const shareAndCopy = () => {
+    setBusy(true);
+    setNote(null);
+    const link = shareLibraryItem(item.id).then((shared) => {
+      onChange(shared);
+      return shareUrl(shared.share_token!);
+    });
+    void copyText(link)
+      .then(afterCopy)
+      .catch((e) => setNote(e instanceof ApiError ? e.message : "Couldn't turn on sharing. Please try again."))
+      .finally(() => setBusy(false));
   };
 
   const action = "text-xs text-zinc-400 transition-colors hover:text-white disabled:opacity-50";
@@ -219,8 +238,8 @@ function LibraryRow({
         <div className="flex flex-wrap items-center gap-4">
           {item.shared && item.share_token ? (
             <>
-              <button type="button" className={action} onClick={() => void copy(item.share_token!)}>
-                Copy link
+              <button type="button" className={action} onClick={() => copyExisting(item.share_token!)}>
+                {copied ? "Copied ✓" : "Copy link"}
               </button>
               <button
                 type="button"
@@ -237,18 +256,7 @@ function LibraryRow({
               </button>
             </>
           ) : (
-            <button
-              type="button"
-              disabled={busy}
-              className={action}
-              onClick={() =>
-                void run(async () => {
-                  const shared = await shareLibraryItem(item.id);
-                  onChange(shared);
-                  if (shared.share_token) await copy(shared.share_token);
-                })
-              }
-            >
+            <button type="button" disabled={busy} className={action} onClick={shareAndCopy}>
               Share
             </button>
           )}
@@ -273,6 +281,24 @@ function LibraryRow({
           </button>
         </div>
       </div>
+      {item.shared && item.share_token ? (
+        <div className="mt-3 flex flex-col gap-1.5">
+          <label className="sr-only" htmlFor={`share-${item.id}`}>
+            Share link
+          </label>
+          <input
+            id={`share-${item.id}`}
+            readOnly
+            value={shareUrl(item.share_token)}
+            onFocus={(e) => e.currentTarget.select()}
+            onClick={(e) => e.currentTarget.select()}
+            className="w-full rounded-lg border border-white/10 bg-zinc-950 px-3 py-2 font-mono text-xs text-zinc-300 outline-none focus:border-[#5e6ad2]/60"
+          />
+          <p className="text-xs text-zinc-500">
+            {copied ? "Copied. " : ""}Anyone with this link can view (not edit) it.
+          </p>
+        </div>
+      ) : null}
       {note ? <p className="mt-3 break-all text-xs text-zinc-400">{note}</p> : null}
     </li>
   );
