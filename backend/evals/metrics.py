@@ -44,6 +44,18 @@ _NOT_COVERED = re.compile(
 )
 
 
+# Words that reveal the retrieval plumbing to a student who only sees "the lecture".
+_INTERNAL = re.compile(
+    r"\b(excerpts?|passages?|transcripts?|snippets?|the (provided|given) (text|context|material|parts?)|"
+    r"the sources?|numbered parts?|context provided)\b",
+    re.IGNORECASE,
+)
+
+
+def leaks_internal_wording(answer: str) -> bool:
+    return bool(_INTERNAL.search(answer or ""))
+
+
 def says_not_covered(answer: str) -> bool:
     return bool(_NOT_COVERED.search(answer or ""))
 
@@ -57,6 +69,7 @@ def score_ask(item: dict[str, Any], sources: Sequence[dict[str, Any]], done: dic
     by_n = {int(s["n"]): s for s in sources}
     cited = [by_n[n] for n in done.get("citations", []) if n in by_n]
     answer = str(done.get("answer", ""))
+    leak = leaks_internal_wording(answer)
     if item.get("answerable"):
         gold = item["gold"]
         good = [s for s in cited if overlaps(float(s["start"]), float(s["end"]), gold)]
@@ -65,8 +78,14 @@ def score_ask(item: dict[str, Any], sources: Sequence[dict[str, Any]], done: dic
             "citation_precision": round(len(good) / len(cited), 4) if cited else 0.0,
             "cited": len(cited),
             "said_not_covered": says_not_covered(answer),
+            "leaks_internal_wording": leak,
         }
-    return {"pass": says_not_covered(answer), "cited": len(cited), "said_not_covered": says_not_covered(answer)}
+    return {
+        "pass": says_not_covered(answer),
+        "cited": len(cited),
+        "said_not_covered": says_not_covered(answer),
+        "leaks_internal_wording": leak,
+    }
 
 
 def ask_summary(rows: Iterable[dict[str, Any]]) -> dict[str, Any]:
@@ -84,6 +103,7 @@ def ask_summary(rows: Iterable[dict[str, Any]]) -> dict[str, Any]:
         "citation_precision": round(sum(precision) / len(precision), 4) if precision else None,
         "unanswerable_admits_not_covered": rate(unans),
         "false_not_covered_on_answerable": rate(ans, "said_not_covered"),
+        "leaks_internal_wording": rate(rows, "leaks_internal_wording"),
     }
 
 

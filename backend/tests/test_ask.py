@@ -205,3 +205,15 @@ def test_closing_the_stream_early_stops_claude(api):
             if line.startswith("event: delta"):
                 break  # the student closed the chat mid-answer
     assert api.fake.closed_early.get("ask") is True
+
+
+def test_prompt_never_names_the_plumbing():
+    """The model repeats whatever it's told it has: it must only hear about "the lecture"."""
+    import re
+
+    agent = AskAgent(client=FakeClaude(summary_delay=0), model="m")
+    msg = agent._user_message("q", sources_from_hits(HITS))
+    # The only place these words may appear is the rule telling the model not to use them.
+    instructions = ASK_SYSTEM.split("never mention")[0]
+    for text in (instructions, msg):
+        assert not re.search(r"\b(excerpts?|passages?|sources?)\b", text, re.I), text

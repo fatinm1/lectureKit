@@ -122,7 +122,18 @@ def run_ask(client: httpx.Client, lectures: list[dict]) -> dict[str, Any]:
                             error = data.get("message", "error")
             row: dict[str, Any] = {"lecture": lec["id"], "q": item["q"], "answerable": bool(item.get("answerable"))}
             if done is None:
-                row.update({"error": error or "no answer", "score": {"pass": False, "cited": 0, "said_not_covered": False, "citation_precision": 0.0}})
+                row.update(
+                    {
+                        "error": error or "no answer",
+                        "score": {
+                            "pass": False,
+                            "cited": 0,
+                            "said_not_covered": False,
+                            "citation_precision": 0.0,
+                            "leaks_internal_wording": False,
+                        },
+                    }
+                )
             else:
                 row.update(
                     {
@@ -171,9 +182,12 @@ def to_markdown(report: dict[str, Any]) -> str:
         md.append(f"- Answerable questions citing the right moment: **{_pct(s['answerable_correct_citation'])}**")
         md.append(f"- Citation precision (cited excerpts inside the gold range): **{_pct(s['citation_precision'])}**")
         md.append(f"- Unanswerable questions where it says the lecture doesn't cover it: **{_pct(s['unanswerable_admits_not_covered'])}**")
-        md.append(f"- Answerable questions wrongly called \"not covered\": **{_pct(s['false_not_covered_on_answerable'])}**\n")
+        md.append(f"- Answerable questions wrongly called \"not covered\": **{_pct(s['false_not_covered_on_answerable'])}**")
+        md.append(f"- Answers mentioning \"excerpts\"/\"passages\"/\"transcript\" (should be 0%): **{_pct(s.get('leaks_internal_wording'))}**\n")
         for r in report["ask"]["rows"]:
             mark = "✓" if r["score"]["pass"] else "✗"
+            if r["score"].get("leaks_internal_wording"):
+                mark += " ⚠ wording"
             tail = r.get("error") or (r.get("answer") or "")[:140].replace("\n", " ")
             md.append(f"- {mark} *{r['q']}* ({'answerable' if r['answerable'] else 'not in lecture'}): {tail}")
         md.append("")
