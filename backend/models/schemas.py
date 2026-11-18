@@ -112,6 +112,7 @@ class SearchRequest(BaseModel):
 
     youtube_url: str = Field(..., description="Full YouTube URL (watch/youtu.be/embed).")
     query: str = Field(..., description="Natural-language search query.")
+    n_results: int = Field(3, ge=1, le=10, description="How many matches to return (default 3).")
 
 
 class SearchResult(BaseModel):

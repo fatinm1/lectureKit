@@ -211,6 +211,15 @@ class Store:
 
     # ---------- embeddings + search ----------
 
+    def get_lecture(self, video_id: str) -> Optional[dict[str, Any]]:
+        with self.pool.connection() as conn:
+            row = conn.execute(
+                "SELECT video_id, youtube_url, duration_s, chunk_count FROM lectures WHERE video_id = %s", (video_id,)
+            ).fetchone()
+        if row is None:
+            return None
+        return {"video_id": row[0], "youtube_url": row[1], "duration_s": row[2], "chunk_count": row[3]}
+
     def has_embeddings(self, video_id: str) -> bool:
         with self.pool.connection() as conn:
             row = conn.execute(

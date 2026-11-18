@@ -1,0 +1,52 @@
+{
+  "version": 1,
+  "notes": "Gold time ranges come from each lecture's generated outline (topic start to next topic start), not from a human watching the video. Spot-check them by clicking the outline timestamps; set \"verified\": true once a label is checked. A retrieval hit means a returned chunk overlaps the gold range.",
+  "lectures": [
+    {
+      "id": "3b1b-nn",
+      "video_id": "aircAruvnKk",
+      "youtube_url": "https://www.youtube.com/watch?v=aircAruvnKk",
+      "title": "3Blue1Brown, But what is a neural network?",
+      "retrieval": [
+        {"q": "Why is recognizing handwritten digits hard for a computer?", "gold": [4, 163], "verified": false},
+        {"q": "What does a single neuron hold?", "gold": [163, 344], "verified": false},
+        {"q": "How many neurons are in the input layer?", "gold": [163, 344], "verified": false},
+        {"q": "Why might hidden layers learn edges and loops?", "gold": [344, 510], "verified": false},
+        {"q": "What does the sigmoid function do?", "gold": [510, 680], "verified": false},
+        {"q": "What is a bias?", "gold": [680, 854], "verified": false},
+        {"q": "How many weights and biases does the network have?", "gold": [680, 854], "verified": false},
+        {"q": "How is a layer's computation written with matrices and vectors?", "gold": [854, 1023], "verified": false},
+        {"q": "Why do modern networks use ReLU instead of sigmoid?", "gold": [1023, 100000], "verified": false}
+      ],
+      "ask": [
+        {"q": "What is a bias and why does a neuron need one?", "answerable": true, "gold": [680, 854]},
+        {"q": "What does the sigmoid function do?", "answerable": true, "gold": [510, 680]},
+        {"q": "How does backpropagation compute the gradient of the cost function?", "answerable": false},
+        {"q": "How does the attention mechanism in a transformer work?", "answerable": false}
+      ]
+    },
+    {
+      "id": "mit-6006-l1",
+      "video_id": "ZA-tUyM_y7s",
+      "youtube_url": "https://www.youtube.com/watch?v=ZA-tUyM_y7s",
+      "title": "MIT 6.006 Lecture 1, Algorithms and Computation",
+      "retrieval": [
+        {"q": "What are the goals of this course?", "gold": [0, 266], "verified": false},
+        {"q": "How is a computational problem defined?", "gold": [266, 465], "verified": false},
+        {"q": "What algorithm finds two students with the same birthday?", "gold": [465, 928], "verified": false},
+        {"q": "How do you prove an algorithm is correct?", "gold": [928, 1481], "verified": false},
+        {"q": "Why count operations instead of measuring running time?", "gold": [1481, 1987], "verified": false},
+        {"q": "What is the difference between big O, Omega and Theta?", "gold": [1481, 1987], "verified": false},
+        {"q": "Which complexity classes count as efficient?", "gold": [1987, 2241], "verified": false},
+        {"q": "What is the word RAM model of computation?", "gold": [2241, 2700], "verified": false},
+        {"q": "What topics will the rest of the course cover?", "gold": [2700, 100000], "verified": false}
+      ],
+      "ask": [
+        {"q": "What is the word RAM model?", "answerable": true, "gold": [2241, 2700]},
+        {"q": "How is induction used to prove the birthday algorithm correct?", "answerable": true, "gold": [928, 1481]},
+        {"q": "How does quicksort choose its pivot?", "answerable": false},
+        {"q": "How does gradient descent update a model's weights?", "answerable": false}
+      ]
+    }
+  ]
+}

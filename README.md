@@ -161,6 +161,26 @@ Follow-ups work: the last 3 turns go back as plain Q/A, but their excerpts aren'
 
 ---
 
+## Evals
+
+`backend/evals/` measures quality against a live API with a fixed, labeled question set (`evals/dataset.json`):
+
+| Suite | Measures | Cost |
+|---|---|---|
+| `retrieval` | Search: does a returned chunk overlap the labeled moment? hit@1, hit@3, hit@5, MRR | Free (embeddings only) |
+| `content` | Cached study kits: outline order and coverage of the whole lecture, 10 unique flashcards spread across it, summary lengths on target | Free (reads the cache) |
+| `ask` | Chat: answerable questions must cite the labeled moment; questions the lecture doesn't cover must be called out as not covered | ~$0.01 per new question; repeats are cached |
+
+```bash
+cd backend && pip install httpx
+python -m evals.run                                  # retrieval + content
+python -m evals.run --suites retrieval,content,ask --out report.md
+```
+
+Or Actions → **Evals** → Run workflow; the report lands on the run's summary page. Each report states the Claude spend for that run (from `/metrics`). Gold time ranges came from generated outlines, so they're marked `verified: false` until a human checks them.
+
+---
+
 ## Accounts, library and sharing
 
 - **Email + password accounts.** Passwords are hashed with argon2id. Logins take the same time whether or not the email exists, and login/signup are limited to 10 tries per IP per hour. Changing your password signs you out everywhere else; deleting your account removes your library and every share link.
@@ -376,6 +396,7 @@ npm run dev
 | POST | /search | Semantic search for a processed video |
 | POST | /ask | "Ask the lecture": grounded answer with `[n]` citations, streamed as SSE |
 | POST | /auth/signup, /auth/login, /auth/logout | Email + password sessions (bearer token) |
+| GET | /lectures/{video_id} | Stored lecture info + cached study kit, read-only (used by the evals) |
 | GET | /auth/me | The signed-in user |
 | POST / DELETE | /auth/password, /auth/account | Change password (ends other sessions) / delete account and library |
 | GET / POST | /library | List the library / save a finished job (`{job_id}`) |
