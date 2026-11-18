@@ -240,3 +240,44 @@ def test_api_search_cache_metrics_and_health(wired, monkeypatch):
 
     h = client.get("/health").json()
     assert h["database"] is True and h["cache"] is True
+
+
+def test_map_notes_are_shared_across_modes(wired, monkeypatch):
+    """A long lecture is mapped once: Student pays for the notes, Faculty reuses them."""
+    from agents import map_reduce as mr
+
+    long_chunks = [
+        TranscriptChunk(text=" ".join(["word"] * 150), start=i * 60.0, end=i * 60.0 + 59, chunk_index=i, word_count=150)
+        for i in range(90)
+    ]
+    monkeypatch.setattr(services.transcript_agent, "process", lambda url: (VIDEO_ID, long_chunks))
+    notes_fake = FakeClaude(structured_delay=0.005)
+    monkeypatch.setattr(services, "get_notes_agent", lambda: mr.NotesAgent(client=notes_fake, model="m"))
+
+    class Faculty:
+        prompt_version = "faculty-test"
+
+        def generate_report(self, chunks, video_id):
+            return {"overall_score": 7, "first": chunks[0].text[:20]}
+
+    monkeypatch.setattr(services, "get_faculty_agent", lambda: Faculty())
+
+    student, _ = _run("s1")
+    assert "mapping" in [e.type for e in student]
+    map_calls = len(notes_fake.calls)
+    assert map_calls == 4  # 13,500 words → 4 sections
+
+    async def faculty():
+        r = AsyncRedis.from_url(REDIS_URL)
+        bus = JobEventBus(r)
+        await bus.create("f1", "faculty", {})
+        await pipeline.run_faculty(bus, "f1", VIDEO_URL)
+        events = await bus.history("f1")
+        await r.aclose()
+        return events
+
+    events = asyncio.run(faculty())
+    ready = [e.data for e in events if e.type == "notes_ready"]
+    assert ready and ready[0]["cached"] is True and "mapping" not in [e.type for e in events]
+    assert len(notes_fake.calls) == map_calls  # no new map calls
+    assert events[-1].type == "done" and events[-1].data["timings"]["map"]["cached"] is True

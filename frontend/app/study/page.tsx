@@ -187,6 +187,8 @@ export default function StudyPage(): JSX.Element {
   const [streamingSection, setStreamingSection] = useState<SummarySection | null>(null);
   const [stopping, setStopping] = useState(false);
   const [stoppedNote, setStoppedNote] = useState<string | null>(null);
+  /** Long lectures: "3 of 6 sections read" while the map step runs, null otherwise. */
+  const [mapProgress, setMapProgress] = useState<string | null>(null);
   const jobIdRef = useRef<string | null>(null);
   const isBuilding = pending.outline || pending.summaries || pending.flashcards || pending.index;
 
@@ -259,7 +261,17 @@ export default function StudyPage(): JSX.Element {
               apply({ flashcards: event.data.flashcards });
               setPending((p) => ({ ...p, flashcards: false }));
               return;
+            case "mapping":
+              setMapProgress(`Long lecture: reading ${event.data.sections} sections…`);
+              return;
+            case "section_mapped":
+              setMapProgress(`Long lecture: ${event.data.done} of ${event.data.total} sections read…`);
+              return;
+            case "notes_ready":
+              setMapProgress(null);
+              return;
             case "done": {
+              setMapProgress(null);
               const timings = event.data.timings ?? {};
               if (typeof timings.total_s === "number") setReadyIn(timings.total_s);
               setFromCache(Boolean(timings.cache_hit));
@@ -268,12 +280,14 @@ export default function StudyPage(): JSX.Element {
               return;
             }
             case "failed":
+              setMapProgress(null);
               setPending(NOTHING_PENDING);
               setStreamingSection(null);
               setJobError(event.data.message || "Processing failed.");
               return;
             case "cancelled": {
               // Keep everything generated before Stop, in a session that survives refresh.
+              setMapProgress(null);
               setStreamingSection(null);
               setStopping(false);
               const r = event.data.result;
@@ -662,7 +676,7 @@ export default function StudyPage(): JSX.Element {
           {isBuilding ? (
             <span className="flex items-center gap-3">
               <span className="text-[#5e6ad2] motion-safe:animate-pulse motion-reduce:animate-none">
-                {stopping ? "Stopping…" : "Building study kit…"}
+                {stopping ? "Stopping…" : mapProgress ?? "Building study kit…"}
               </span>
               <button
                 type="button"

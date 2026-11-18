@@ -51,6 +51,10 @@ export type JobEventMap = {
   lecture_fetched: { index: number; total: number; video_id: string };
   lecture_failed: { index: number; total: number; url: string; error: string };
   analyzing: { lecture_count?: number };
+  /** Long lecture: the transcript is being condensed into section notes first (map step). */
+  mapping: { sections: number; words: number; lecture_index?: number };
+  section_mapped: { done: number; total: number; lecture_index?: number };
+  notes_ready: { sections: number; cached: boolean; lecture_index?: number };
   done: { result: StudentResult | FacultyResult | ProvostResult; timings: Record<string, number> };
   failed: { stage: string; status: number; message: string };
   /** The user pressed Stop; `result` holds whatever was generated before that. */
@@ -74,6 +78,9 @@ const EVENT_TYPES: JobEventType[] = [
   "lecture_fetched",
   "lecture_failed",
   "analyzing",
+  "mapping",
+  "section_mapped",
+  "notes_ready",
   "done",
   "failed",
   "cancelled",
