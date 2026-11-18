@@ -1,0 +1,42 @@
+# Run the evals against a deployed API (Actions tab → "Evals" → Run workflow).
+# The report shows on the run's summary page and is kept as an artifact.
+name: Evals
+
+on:
+  workflow_dispatch:
+    inputs:
+      api:
+        description: API to evaluate
+        default: https://lecturekit-production.up.railway.app
+        required: true
+      suites:
+        description: "retrieval,content are free; add ,ask for chat (~$0.01 per new question)"
+        default: retrieval,content
+        required: true
+
+jobs:
+  evals:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install "httpx>=0.27"
+      - name: Run evals
+        run: python -m evals.run --api "${{ inputs.api }}" --suites "${{ inputs.suites }}" --out report.md --json report.json
+      - name: Report
+        if: always()
+        run: test -f report.md && cat report.md >> "$GITHUB_STEP_SUMMARY" || echo "No report written." >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: eval-report
+          path: |
+            backend/report.md
+            backend/report.json
+          if-no-files-found: ignore

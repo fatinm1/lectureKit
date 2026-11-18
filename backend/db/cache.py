@@ -126,6 +126,16 @@ class Cache:
     def _result_key(video_id: str, kind: str, language: str, prompt_version: str) -> str:
         return f"{_PREFIX}:result:{video_id}:{kind}:{language}:{prompt_version}"
 
+    def peek_result(self, video_id: str, kind: str, language: str, prompt_version: str) -> Optional[dict[str, Any]]:
+        """A cached payload without touching the hit/miss/saved counters (evals, inspection)."""
+        hot = self._rget(self._result_key(video_id, kind, language, prompt_version))
+        if hot is not None:
+            return hot["payload"]
+        if self.store is not None:
+            found = self.store.get_result(video_id, kind, language, prompt_version)
+            return found.payload if found is not None else None
+        return None
+
     def get_result(self, video_id: str, kind: str, language: str, prompt_version: str) -> Optional[StoredResult]:
         key = self._result_key(video_id, kind, language, prompt_version)
         hot = self._rget(key)

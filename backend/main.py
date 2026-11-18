@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import logging
+from typing import Any
 import os
 import time
 import traceback
@@ -346,12 +347,13 @@ def search_video(payload: SearchRequest) -> SearchResponse:
 
     # Step: Hot search cache (Redis). Embeddings never change for a lecture, so a cached
     # answer for the same normalized query can't go stale.
-    cached = services.cache.get_search(video_id, query, 3)
+    n = payload.n_results
+    cached = services.cache.get_search(video_id, query, n)
     if cached is not None:
         return SearchResponse(results=[SearchResult(**r) for r in cached], query=query, video_id=video_id)
 
     try:
-        hits = services.search_agent.search(video_id=video_id, query=query, n_results=3)
+        hits = services.search_agent.search(video_id=video_id, query=query, n_results=n)
     except SearchAgentError as exc:
         msg = str(exc)
         if "not processed" in msg or "Collection not found" in msg:
@@ -370,7 +372,7 @@ def search_video(payload: SearchRequest) -> SearchResponse:
         )
         for h in hits
     ]
-    services.cache.save_search(video_id, query, 3, [r.model_dump() for r in results])
+    services.cache.save_search(video_id, query, n, [r.model_dump() for r in results])
 
     return SearchResponse(results=results, query=query, video_id=video_id)
 
@@ -460,6 +462,23 @@ def ask_lecture(payload: AskRequest) -> StreamingResponse:
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+@app.get("/lectures/{video_id}")
+def lecture_info(video_id: str) -> dict[str, Any]:
+    """
+    What's stored for a lecture: duration, chunk count, whether search is indexed, and the
+    cached English study kit if one exists. Read-only and Claude-free (used by the evals).
+    """
+    if services.store is None:
+        raise HTTPException(status_code=503, detail="No database on this server.")
+    lecture = services.store.get_lecture(video_id)
+    if lecture is None:
+        raise HTTPException(status_code=404, detail="This lecture hasn't been processed.")
+    study_kit = services.cache.peek_result(
+        video_id, "student", "en", services.get_streaming_content_agent().prompt_version
+    )
+    return {**lecture, "indexed": services.store.has_embeddings(video_id), "study_kit": study_kit}
 
 
 @app.get("/metrics")
